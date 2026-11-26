@@ -2,18 +2,10 @@
 # SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
 # SPDX-License-Identifier: Apache-2.0
 #
-# Provision a MEASUREMENT VENUE with everything the propagation
-# harness and the K3 comparator need, and prove each piece by running it.
-#
-# WHY THIS EXISTS. This measurement reuses scripts/stack.sh on two Linux
-# guests and never says how granary gets there -- and the existing Linux
-# build lane cannot supply it: scripts/linux-container.sh
-# builds inside `docker.io/library/rust:1.97.1`, which is Debian trixie with
-# glibc 2.41, while BOTH measurement venues are RHEL-9-class with glibc 2.34
-# (AlmaLinux 9.8 on the Tier 2 measurement guest and CentOS Stream 9 on the
-# local aarch64 guest). Neither guest can run a binary from that container.
-# This script builds on the guest with the toolchain this repository pins.
-# Use it after rebuilding the Tier 2 guest for the K3 measurement.
+# Prepare a RHEL 9-class benchmark guest for scripts/m10-propagate.sh.
+# Build Granary on the guest with the pinned Rust toolchain. The standard
+# Linux container builds against glibc 2.41, and the guest uses glibc 2.34.
+# The guest build links against the glibc version available at runtime.
 #
 #   scripts/m10-venue.sh provision [ssh-opts...] <ssh-destination>
 #   scripts/m10-venue.sh check     [ssh-opts...] <ssh-destination>
@@ -45,14 +37,14 @@
 #     demand a diagnostic only that binary emits, the same way
 #     stack.sh:344-382 does.
 #
-# WHICH REFUSALS HAVE ACTUALLY FIRED (2026-09-09, on this host):
+# Refusal checks recorded on 2026-09-09:
 #   * unreachable venue -- EXERCISED. `provision ... nobody@10.255.255.1` →
 #     rc 1, "could not reach the venue over ssh ... This says NOTHING about
 #     the guest". This check exists BECAUSE its absence was a fail-open: the
 #     dnf probe alone reported "the venue has no dnf" when the real cause was
 #     a mangled ssh option.
 #   * wrong-architecture binary -- EXERCISED. A macOS Mach-O `gran` planted at
-#     target/release/gran on the aarch64 guest → rc 1, "did not print gran's
+#     target/release/gran on an aarch64 guest → rc 1, "did not print gran's
 #     usage banner: ... cannot execute binary file: Exec format error".
 #   * no dnf -- NOT EXERCISED, and said here rather than left to be assumed.
 #     No reachable RHEL-family-less venue was available to point it at; Fedora
@@ -63,15 +55,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# `strace` is here for INVESTIGATION, not for a metric. `strace -c` summarises
-# syscalls and cannot
-# decode `fuse_in_header.opcode`, and a raw read(2) count on /dev/fuse conflates
-# a batched READDIRPLUS reply with a single LOOKUP. So NO SCRIPT INVOKES IT and
-# the K3 contract collects no upcall counts; the one measurement that exists on
-# the point came from an interactive session. It stays
-# in the package set because diagnosing a FUSE daemon on a guest with no
-# debugger is far more expensive than one package, and this comment says what it
-# is for rather than letting a reader count it as a live instrument.
+# Install strace for manual FUSE diagnostics. The harness measures file
+# availability and leaves strace to the operator. Counting FUSE operations
+# would require decoding opcodes because one read can carry a batch of replies.
 PACKAGES="fuse3 gcc perl-Digest-SHA strace"
 REMOTE_DIR="granary"
 FROM_HEAD=0

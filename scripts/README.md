@@ -26,7 +26,7 @@ a script here, so any of them can be run by hand.
 | [`check-server-log-path.sh`](check-server-log-path.sh) | a runtime-worker log bypassing `tracing`, a standard-stream handle outside the allow list, or missing production request-span/`served` instrumentation |
 | [`check-mount-write-path.sh`](check-mount-write-path.sh) | a bare mount standard-stream write (no terminal exceptions); only the bounded direct writer and main's sink construction may obtain stderr; missing sources, anchors, panic-hook installation or scan boundaries also refuse |
 | [`check-inventory-fresh.sh`](check-inventory-fresh.sh) | a [`supply-chain/`](../supply-chain/) inventory stale against the locks |
-| [`check-citations.py`](check-citations.py) | a `path:N` citation that points past the end of its target file |
+| [`check-citations.py`](check-citations.py) | a `path:N` citation that points past the end of its target file. Run `python3 -I scripts/check-citations.py --output` from the repository root, as CI does. |
 | [`check-fuse-sync-wire.py`](check-fuse-sync-wire.py) `--self-test`, [`test-authority-lifecycle-strace.py`](test-authority-lifecycle-strace.py) | a change to either syscall-trace checker (the FUSE sync wire witness, the authority venue's lifecycle check) that breaks its paired valid and malformed controls |
 | [`check-fail-open.py`](check-fail-open.py) | a gate that silently stops checking — the fail-open shape lint |
 
