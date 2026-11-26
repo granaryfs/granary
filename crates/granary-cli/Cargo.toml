@@ -1,0 +1,98 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "granary-cli"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "the gran command-line binary"
+
+# BIN-ONLY, and that is load-bearing rather than incidental. There is no
+# `[lib]` here: every item this binary needs from the client is reached
+# through `granary_client::`, which is why the move out of that crate was
+# mechanical (the bin's only `crate::` references were in comments).
+#
+# `cargo clippy -p granary-cli --lib` therefore exits 101 with
+# `no library targets found in package` and an EMPTY JSON stream. That is
+# why `scripts/check-fsguard-sites.sh` does NOT give this crate a
+# check_resolution row — see the ruling recorded at
+# CLIENT_RESOLUTION_CRATE in that script.
+[[bin]]
+name = "gran"
+path = "src/main.rs"
+
+[dependencies]
+# The incumbent. Everything the binary does to the client's world goes
+# through this one edge, which is what makes the cli's dependency closure
+# a superset of the client's — the premise check_closure_premise executes
+# on every gate run.
+granary-client = { path = "../granary-client" }
+granary-core = { path = "../granary-core" }
+granary-fuse = { path = "../granary-fuse" }
+granary-net = { path = "../granary-net" }
+granary-store = { path = "../granary-store" }
+granary-vfs = { path = "../granary-vfs" }
+fuser = { workspace = true }
+libc = { workspace = true }
+tokio = { workspace = true, features = ["time", "sync", "net", "io-util"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+# `object_store` is a DEV-dependency here, not a normal one, and that
+# corrects a false claim the incumbent's manifest carried: it justified
+# object_store by "main names `AmazonS3Builder` directly", and that name
+# appears ZERO times in this file's source. Its only use is
+# `object_store::memory::InMemory` inside `mod tests`, so this dependency
+# belongs in `[dev-dependencies]`.
+object_store = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "test-util"] }
+
+# Forwards granary-fuse's feature exactly as the incumbent did: this crate
+# owns `gran mount --breakage <name>`'s cfg'd parse arm, `breakage_banner`
+# and the arming call in the Linux-only daemon body, so the name has to be
+# declared HERE now that the binary lives here.
+[features]
+# Test-only fault emissions remain guarded by the client's existing release refusal.
+overlay-fault-tests = ["granary-client/overlay-fault-tests"]
+publish-restart-tests = ["granary-client/publish-restart-tests"]
+conformance-breakage = ["granary-fuse/conformance-breakage"]
+
+# This crate cannot inherit `[workspace.lints]` verbatim, for the same
+# reason granary-client cannot: `unsafe_code = "forbid"` is inherited and
+# per-site-unoverridable, and this crate carries ONE `#[expect(unsafe_code,
+# ...)]` site — the process-credential and set-ID-taint snapshot. **It lives
+# in `admission.rs`; `main.rs` and `keys.rs` carry NONE** (the Apple-only
+# extended-ACL probe is `granary-client`'s `custody.rs`), so a maintainer
+# auditing the divergence looks in that one file. `check-unsafe-sites.sh` counts PER CRATE, so no gate sees
+# a file name in here go stale. This is therefore this crate's OWN copy of
+# the root tables with exactly ONE divergence, `deny` in place of `forbid`.
+# The cli needs its own FULL lint table, not
+# an inheritance — a partial copy silently changes the regime for the
+# whole crate.
+[lints.rust]
+unsafe_code = "deny"            # ONE divergence from the workspace table — see above
+unsafe_op_in_unsafe_fn = "deny" # warn-by-default in edition 2024; load-bearing now that unsafe exists here
+unexpected_cfgs = { level = "deny", check-cfg = ["cfg(granary_sim)"] }  # the sim is reserved as a cfg — a sim *feature* would leak via unification
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+elided_lifetimes_in_paths = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+disallowed_methods = "deny"
+disallowed_macros = "deny"      # warn-by-default; the `tokio::select!`, `tokio::join!` and `tokio::try_join!` bans are not advisory
+disallowed_types = "allow"      # core opts IN via crate attribute; HashMap is legitimate elsewhere
+# docs/coding-standards.md MUST-1, in the compiler. A [lints] table covers
+# every target of the crate at once — the crate root would cover only the
+# bin, leaving the three `tests/*.rs` integration crates that moved with it
+# with nothing refusing a bare `#[allow]` or a reasonless `#[expect]`.
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"

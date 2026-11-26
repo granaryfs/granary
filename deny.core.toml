@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+# Purity gate for granary-core: no I/O, async runtime, or wall clock.
+# Run ONLY via scripts/check-core-purity.sh (sole-root form).
+
+[graph]
+all-features = true   # feature-gated deps must not escape the purity gate
+
+[bans]
+multiple-versions = "allow"
+deny = [
+  { name = "tokio" }, { name = "mio" }, { name = "socket2" },
+  { name = "hyper" }, { name = "quinn" }, { name = "h3" },
+  { name = "rustls" }, { name = "object_store" },
+  # libc stays banned as a DIRECT dep; the single blessed edge is
+  # cpufeatures -> libc (metadata-union edge under blake3).
+  # wrappers = per-direct-parent-edge semantics, verified 2026-08-09.
+  { name = "libc", wrappers = ["cpufeatures"] },
+  { name = "syn" }, { name = "quote" }, { name = "proc-macro2" },
+  # wall-clock/entropy gateways + alt runtimes:
+  # clippy's disallowed-methods only covers std::time — these bypass it
+  { name = "chrono" }, { name = "time" }, { name = "getrandom" },
+  { name = "async-std" }, { name = "smol" },
+]
+[bans.build]
+include-workspace = true
+# Core: NO build scripts — with the two named exceptions below.
+allow-build-scripts = [
+  # The settled grain-identity hash (spec §4). Version-PINNED: bumping
+  # the dep hard-fails this gate until the entry is consciously updated,
+  # forcing a build.rs re-review at exactly the bump moment.
+  { name = "blake3", version = "=1.8.7" },
+  # cfg probe; present only in cargo-deny's all-targets metadata union
+  # (blake3 pulls cpufeatures on x86; cpufeatures pulls libc on
+  # aarch64/loongarch64 — no single real target compiles libc via this
+  # path). Unpinned: floats with routine lock maintenance.
+  { name = "libc" },
+]
+
+[licenses]
+# Grow deliberately: global allow stays Apache-only; everything else is
+# a named, per-crate exception, never a blanket allowance.
+allow = ["Apache-2.0"]
+exceptions = [
+  { name = "fastcdc", allow = ["MIT"] },           # the frozen chunker; MIT-only upstream
+]

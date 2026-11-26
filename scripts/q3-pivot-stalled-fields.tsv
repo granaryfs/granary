@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+diagnostic_outcome	stalled
+diagnostic_completed_count	0
+diagnostic_stall_index	0
+diagnostic_stall_phase	warmup
+diagnostic_publish_bound_ns	100000000
+diagnostic_publish_censored_count	0
+diagnostic_publish_p99_report	stalled
+diagnostic_publish_stalls	0
+diagnostic_publish_stall_ns	none
+diagnostic_warmup_publish_stalls	1
+diagnostic_warmup_publish_stall_ns	2100000000
+diagnostic_completion_bound_ns	2000000000
+diagnostic_completion_stalls	0
+diagnostic_completion_stall_ns	none
+diagnostic_completion_stall_issue	#832

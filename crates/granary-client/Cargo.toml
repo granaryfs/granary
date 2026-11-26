@@ -1,0 +1,222 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "granary-client"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "client-side publish, harvest, resolve, cache and mount-session logic"
+
+# The lib exists so granary-sim can call the publish flow at all: a
+# `#[path = "../src/publish.rs"]` include does not compose ACROSS crates.
+# Its surface is curated in `lib.rs`, not the
+# modules wholesale.
+[lib]
+name = "granary_client"
+path = "src/lib.rs"
+
+[dependencies]
+granary-core = { path = "../granary-core" }
+# The mount session implements granary-fuse's `MountBackend` and
+# takes its `FUSE_SERVE_LIMITS`.
+granary-fuse = { path = "../granary-fuse" }
+# The reader engine: `GrainFetch`/`GrainUnavailable`/`Snapshot`/
+# `SnapshotError`/`AttrPolicy` live here, and `granary-fuse` does not
+# re-export them publicly, so the client names this crate directly.
+granary-vfs = { path = "../granary-vfs" }
+# The pinned SPKI verifier and the one production client TLS
+# constructor. The through-the-server publish path is what makes it a
+# client concern.
+granary-net = { path = "../granary-net" }
+# The `gran publish` command's codec/crypto/backend adapters.
+granary-store = { path = "../granary-store" }
+# object_store. `AmazonS3Builder` is not reachable through
+# granary-store, which exports no object_store type (its `http_client`
+# exports `NoRedirectConnector`, a granary type implementing object_store's
+# `HttpConnector` trait); `publish` is generic over `R: RootStore + BinStore` and names no
+# backend type at all, which is what lets the sim drive it against fakes.
+# This stays a NORMAL dependency because the lib's own `http_store` and
+# `RouteError::Store` name object_store types — not because of the bin,
+# which reached it only from inside `mod tests`.
+object_store = { workspace = true }
+# object_store is async; `gran publish` drives it on a current-thread
+# runtime (workspace pin: rt + macros).
+#
+# `time` is DECLARED and not inherited: every library-code
+# `tokio::time::timeout` call (the two per-call deadline seams,
+# `http_store.rs` for the `PublishRoute::Server` route and
+# `direct_deadline.rs` for `PublishRoute::DirectS3`, plus `fetcher.rs`'s
+# sleep substitute for its `Unavailable` retry delay) needs it, so a
+# feature this crate only receives by unification from object_store's
+# reqwest chain is a build that breaks the day that chain stops asking
+# for it. Phrased as the CLASS rather than an enumerated count: a count
+# goes stale the next time a call site is added, a class does not. Zero
+# new packages — tokio's `time` feature enables no optional dependency.
+#
+# `sync` is DECLARED here too, same pattern: `head.rs`'s
+# single-flight coalescing calls `tokio::sync::watch` in LIBRARY
+# code. It already arrives by unification today (object_store's
+# chain pulls it in), but the crate's own rule above is that relying
+# on that lets upstream feature changes break this crate's build — zero
+# new packages, `sync` enables no optional dependency of its own.
+tokio = { workspace = true, features = ["time", "sync"] }
+# The HTTPS transport for `HttpStore`. `default-features = false`
+# lives on the WORKSPACE line (edition 2024 forbids a member-only
+# override), so nothing here asks for `tls12` — but the build HAS
+# it: reqwest (via object_store's `aws` feature) declares
+# hyper-rustls with `tls12`, and feature unification makes that the
+# whole graph's answer (`cargo tree -e features -i hyper-rustls`
+# ends `hyper-rustls feature "tls12" -> reqwest v0.13.4`; rustls
+# picks it up the same way, and already had it from its own default
+# via granary-net). The TLS-1.2 code IS compiled in and is
+# unreachable for a different reason: `client_tls_config` builds
+# the config with an explicit `with_protocol_versions(&[&TLS13])`,
+# which `production_client_config_refuses_a_tls12_only_peer`
+# exercises against a TLS-1.2-only peer. That pin is the guarantee
+# — a feature list this crate does not control is not one.
+hyper-rustls = { workspace = true, features = ["http1", "http2"] }
+hyper = { workspace = true, features = ["client", "http1", "http2"] }
+hyper-util = { workspace = true, features = ["client-legacy", "http1", "http2", "tokio"] }
+http-body-util = { workspace = true }
+# `retry.rs`'s classifier downcasts a transport failure's
+# source() chain to `h2::Error` to tell a REFUSED_STREAM reset
+# (RFC 9113 §8.7's non-processing guarantee) and a remote GOAWAY apart from
+# everything else. Already in the lock via hyper's http2 feature,
+# so this edge adds ZERO new packages — it changes this crate's own
+# Cargo.lock entry, not the dependency graph's package set. It is
+# also a dev-dependency of the server crate (its h2-leg loopback stub
+# client); this is the only workspace crate with a DIRECT regular
+# dependency on it. Checklist: docs/dependency-policy.md.
+h2 = { workspace = true }
+# tracing (the macro crate): library code emits its diagnostics through
+# it — among them the cache's and store's `warn!`/`debug!` lines, and
+# `http_store.rs`'s `send()` retry path (the seam call site; `retry.rs`
+# holds the classifier `send()` calls, not `send()` itself), which emits
+# one `tracing::debug!` line naming the seam, the classified class and
+# the first attempt's error chain before retrying — diagnostic only,
+# never part of the error contract (no subscriber is guaranteed present;
+# installing one is the binary's job, see `tracing-subscriber` below). add-dependency
+# checklist run and recorded in docs/dependency-policy.md.
+tracing = { workspace = true }
+# >>> A NORMAL DEPENDENCY, USED BY PRODUCTION CODE AND BY TESTS. <<<
+# `observe::subscriber` assembles the text and JSON layers the binary
+# installs (the binary still decides to install them), and unit-test modules
+# and integration tests build layers that capture events. It also stays in
+# [dependencies] because of check 9's closure premise in
+# check-fsguard-sites.sh: `granary-cli` needs the
+# subscriber as a NORMAL dependency for its `.init()`, and this crate
+# reaches several packages only through it (`tracing-subscriber` itself
+# and its own dependencies, such as `matchers` and `sharded-slab`). A
+# dev-only edge here would make the cli reach those while the client does
+# not, and the RE-ARM half of the cli's INHERITED clippy verdict would
+# stop holding — an allow-invalid row could resolve under the cli while
+# staying dormant under the client, with nothing evaluating it.
+# Declaring them in CLI_ONLY_PACKAGES_EXPECTED would buy a tidier
+# manifest by weakening a real invariant, which is the wrong side of
+# that trade.
+tracing-subscriber = { workspace = true }
+# The client cache's FreeSpace seam (macOS statfs / Linux statvfs
+# — kernel interfaces per dependency-policy rule 1) and the macOS
+# required plain-fsync call. Already in Cargo.lock via
+# cpufeatures -> libc; this is the crate's first DIRECT edge,
+# adding zero new packages. add-dependency checklist run at the
+# cache task, recorded in docs/dependency-policy.md.
+libc = { workspace = true }
+# Descriptor-relative overlay custody uses these safe kernel-interface
+# wrappers. The package and all named features are already in the workspace
+# graph, so this direct edge adds no package or build-time execution.
+nix = { workspace = true, features = ["dir", "fs", "user"] }
+# `fuser` is NOT a direct dependency. This crate does not construct a
+# `fuser::Session`; `granary-cli` does, and declares `fuser` itself.
+# The package closure still includes `fuser`: `granary-fuse` depends on
+# it and this crate depends on `granary-fuse`. Only the DIRECT edge is
+# absent, so check 9's bidirectional closure premise is unaffected —
+# unlike demoting `tracing-subscriber` above, which that premise
+# refuses.
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Descriptor mount identity and POSIX ACL inspection without new unsafe sites.
+rustix = { version = "=1.1.6", features = ["fs"] }
+
+[dev-dependencies]
+# The stub servers the HttpStore suite drives: a real TLS listener that
+# answers the adversarial rows a conforming granary server never sends.
+# `test-util`: `tokio::time::{pause, advance}` is what
+# makes the per-seam-call deadline rows instant rather than real
+# wall-clock waits of up to the production figure — zero new
+# packages, `test-util` enables no optional dependency of its own.
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "test-util"] }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rcgen = { workspace = true }
+hyper = { workspace = true, features = ["server"] }
+hyper-util = { workspace = true, features = ["server-auto", "tokio"] }
+
+# This crate cannot inherit `[workspace.lints]` verbatim —
+# `unsafe_code = "forbid"` is inherited and per-site-unoverridable,
+# and the cache's FreeSpace/fsync FFI calls cannot compile under
+# `forbid`. This is therefore this crate's OWN copy of the root
+# Cargo.toml's `[workspace.lints.rust]` + `[workspace.lints.clippy]`
+# tables, every line, with two divergences in the rust lint table:
+# `unsafe_code = "deny"` in place of `"forbid"`, and `linker_messages`
+# (its reason is beside it). `deny` still refuses unsafe code
+# everywhere in the crate EXCEPT the six named `#[expect(unsafe_code,
+# reason = "...")]` sites: one in `cache/write.rs` (the macOS
+# plain-`fsync` call), two in `cache/space.rs` (the two `FreeSpace`
+# platform calls), and one in `custody.rs` (the Apple-only extended-ACL
+# probe, shared by the CLI's seed and the TLS client's key), and two
+# in `publication_store/archive.rs` (Linux/macOS no-replace rename). The
+# process-credential and set-ID-taint snapshot is `granary-cli`'s. No gate
+# reads this prose, so its count and ownership need manual checking when
+# these sites move.
+# This licenses nothing
+# else: `unsafe_op_in_unsafe_fn` stays `deny` below, so an `unsafe fn`
+# body still needs its own inner `unsafe` block.
+
+# NO `conformance-breakage` FEATURE HERE ANY MORE. Every item that ever
+# sat behind it — `gran mount --breakage <name>`'s cfg'd parse arm,
+# `breakage_banner`, and the arming call in the Linux-only daemon body —
+# left with the binary, and this crate's own `src/` uses the name ZERO
+# times (measured at the move). Declaring a feature no source reads is a
+# selection that silently affects nothing, so it is removed rather than
+# carried; `granary-cli` declares it now, forwarding to granary-fuse.
+
+[features]
+publish-restart-tests = []
+overlay-fault-tests = []
+
+[lints.rust]
+unsafe_code = "deny"            # divergence from the workspace table — see above
+unsafe_op_in_unsafe_fn = "deny" # warn-by-default in edition 2024; load-bearing now that unsafe exists here
+unexpected_cfgs = { level = "deny", check-cfg = ["cfg(granary_sim)"] }  # the sim is reserved as a cfg — a sim *feature* would leak via unification
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+elided_lifetimes_in_paths = "warn"
+# Apple's linker reports `__eh_frame` over 16 MiB in this crate's unit-test
+# binary. It's an unwind performance note. Tests still unwind.
+# rustc settles `#[expect]` before linking, so set the level here, like
+# `disallowed_types`. Remove once the binary is under the limit or the
+# toolchain can scope the lint.
+linker_messages = "allow"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+disallowed_methods = "deny"
+disallowed_macros = "deny"      # warn-by-default; the bans on tokio::select!, tokio::join! and tokio::try_join! are not advisory
+disallowed_types = "allow"      # core opts IN via crate attribute; HashMap is legitimate elsewhere
+# docs/coding-standards.md MUST-1, in the compiler. Here rather than on
+# the crate root: a crate-root attribute covers only ITS target, so
+# `lib.rs` alone — there were two roots, `lib.rs` plus `main.rs`, until
+# the binary left — leaves the `tests/*.rs` integration crates
+# — and any bench, example or build script added later — with nothing
+# refusing a bare `#[allow]` or a reasonless `#[expect]`. A [lints] table
+# covers every target of the crate at once.
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"

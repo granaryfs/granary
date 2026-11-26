@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "granary-core"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "granary pure logic: formats, chunking, protocol types (no I/O, no tokio)"
+
+[dependencies]
+blake3 = { workspace = true }
+fastcdc = { workspace = true }
+
+[lints]
+workspace = true

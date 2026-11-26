@@ -1,0 +1,99 @@
+magic	BadMagic
+empty	TooShort { len: 0 }
+short-magic	TooShort { len: 7 }
+short-envelope	TooShort { len: 41 }
+oversize	TooLong { len: 524 }
+oversize-bad-check	TooLong { len: 524 }
+check	BadCheck
+check-unkeyed	BadCheck
+check-context	BadCheck
+version-0	UnknownVersion { version: 0 }
+version-2	UnknownVersion { version: 2 }
+version-65535	UnknownVersion { version: 65535 }
+revision-zero	InvalidValue(InvalidFileRevision)
+generation-0	InvalidValue(InvalidGeneration { generation: 0, revision: 1 })
+generation-2	InvalidValue(InvalidGeneration { generation: 2, revision: 1 })
+generation-18446744073709551615	InvalidValue(InvalidGeneration { generation: 18446744073709551615, revision: 1 })
+action-0	InvalidAction { tag: 0 }
+scope-0	InvalidScope { tag: 0 }
+action-4	InvalidAction { tag: 4 }
+scope-4	InvalidScope { tag: 4 }
+action-255	InvalidAction { tag: 255 }
+scope-255	InvalidScope { tag: 255 }
+owner-length-0	InvalidValue(BadLabelLength { field: Owner, len: 0 })
+owner-length-65	InvalidValue(BadLabelLength { field: Owner, len: 65 })
+owner-byte-00	InvalidValue(BadLabelByte { field: Owner, byte: 0 })
+owner-byte-1f	InvalidValue(BadLabelByte { field: Owner, byte: 31 })
+owner-byte-20	InvalidValue(BadLabelByte { field: Owner, byte: 32 })
+owner-byte-7f	InvalidValue(BadLabelByte { field: Owner, byte: 127 })
+owner-byte-80	InvalidValue(BadLabelByte { field: Owner, byte: 128 })
+owner-byte-ff	InvalidValue(BadLabelByte { field: Owner, byte: 255 })
+reason-length-0	InvalidValue(BadLabelLength { field: Reason, len: 0 })
+reason-length-257	InvalidValue(BadLabelLength { field: Reason, len: 257 })
+reason-byte-00	InvalidValue(BadLabelByte { field: Reason, byte: 0 })
+reason-byte-1f	InvalidValue(BadLabelByte { field: Reason, byte: 31 })
+reason-byte-20	InvalidValue(BadLabelByte { field: Reason, byte: 32 })
+reason-byte-7f	InvalidValue(BadLabelByte { field: Reason, byte: 127 })
+reason-byte-80	InvalidValue(BadLabelByte { field: Reason, byte: 128 })
+reason-byte-ff	InvalidValue(BadLabelByte { field: Reason, byte: 255 })
+issued-nanos-1000000000	InvalidValue(InvalidNanoseconds { field: IssuedAt, nanos: 1000000000 })
+issued-nanos-4294967295	InvalidValue(InvalidNanoseconds { field: IssuedAt, nanos: 4294967295 })
+expires-nanos-1000000000	InvalidValue(InvalidNanoseconds { field: ExpiresAt, nanos: 1000000000 })
+expires-nanos-4294967295	InvalidValue(InvalidNanoseconds { field: ExpiresAt, nanos: 4294967295 })
+duration-zero	InvalidValue(InvalidDuration)
+duration-negative	InvalidValue(InvalidDuration)
+duration-negative-nano	InvalidValue(InvalidDuration)
+duration-901	InvalidValue(InvalidDuration)
+duration-900-plus-nano	InvalidValue(InvalidDuration)
+duration-extreme-positive	InvalidValue(InvalidDuration)
+duration-extreme-negative	InvalidValue(InvalidDuration)
+lines-1025	InvalidValue(BudgetOverBound { field: Lines, value: 1025 })
+lines-18446744073709551615	InvalidValue(BudgetOverBound { field: Lines, value: 18446744073709551615 })
+bytes-1048577	InvalidValue(BudgetOverBound { field: Bytes, value: 1048577 })
+bytes-18446744073709551615	InvalidValue(BudgetOverBound { field: Bytes, value: 18446744073709551615 })
+volume-length-0	InvalidVolume(Empty)
+volume-length-64	InvalidVolume(TooLong { len: 64 })
+volume-length-255	InvalidVolume(TooLong { len: 255 })
+volume-byte-00	InvalidVolume(BadByte { byte: 0 })
+volume-byte-20	InvalidVolume(BadByte { byte: 32 })
+volume-byte-56	InvalidVolume(BadByte { byte: 86 })
+volume-byte-5f	InvalidVolume(BadByte { byte: 95 })
+volume-byte-ff	InvalidVolume(BadByte { byte: 255 })
+volume-leading-dash	InvalidVolume(LeadingDash)
+volume-trailing-dash	InvalidVolume(TrailingDash)
+truncated-10	Truncated
+truncated-25	Truncated
+truncated-26	Truncated
+truncated-33	Truncated
+truncated-34	Truncated
+truncated-41	Truncated
+truncated-42	Truncated
+truncated-43	Truncated
+truncated-46	Truncated
+truncated-47	Truncated
+truncated-48	Truncated
+truncated-50	Truncated
+truncated-51	Truncated
+truncated-52	Truncated
+truncated-53	Truncated
+truncated-59	Truncated
+truncated-60	Truncated
+truncated-67	Truncated
+truncated-68	Truncated
+truncated-71	Truncated
+truncated-72	Truncated
+truncated-79	Truncated
+truncated-80	Truncated
+truncated-83	Truncated
+truncated-84	Truncated
+truncated-85	Truncated
+truncated-100	Truncated
+truncated-101	Truncated
+truncated-108	Truncated
+truncated-109	Truncated
+truncated-116	Truncated
+volume-truncated-85	Truncated
+volume-truncated-86	Truncated
+volume-truncated-90	Truncated
+trailing	TrailingData { len: 1 }
+trailing-unrepaired	BadCheck

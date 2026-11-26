@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "granary-sim"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "deterministic sim harness (unpublished)"
+
+[dependencies]
+# The three seams the fakes implement, and the publish flow + resolve
+# oracle they are driven by. Declared HERE, at their first use, because
+# a dependency declared ahead of its first use fails `cargo-shear`.
+granary-core = { path = "../granary-core" }
+granary-client = { path = "../granary-client" }
+# The publishing key the scenario fixture signs its roots with. In
+# `[dependencies]` and not `[dev-dependencies]` because the fixture lives
+# in the lib (`scenario`), which a `src/bin` target can see and a test
+# target's helpers cannot. No new external crate: granary-sim already
+# reaches granary-store through granary-client; the sim's dependency
+# TREE is not pure.
+granary-store = { path = "../granary-store" }
+# Engine join channels and the deadline type; scheduling remains simulator-owned.
+tokio = { workspace = true, features = ["sync", "time"] }
+
+[dev-dependencies]
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[features]
+overlay-fault-tests = ["granary-client/overlay-fault-tests", "granary-client/publish-restart-tests"]
+
+[[test]]
+name = "sync_engine"
+required-features = ["overlay-fault-tests"]
+
+[lints]
+workspace = true

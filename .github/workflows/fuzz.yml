@@ -1,0 +1,154 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+name: fuzz
+on:
+  schedule:
+    - cron: "0 4 * * 6"   # weekly Sat, before fips (06:00); auto-disables after 60d inactivity — re-enable on return (standing reminder)
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  fuzz:
+    runs-on: ubuntu-24.04
+    # 16 targets at 420 seconds, fourteen at 120 and one at 60 require
+    # 8,460 seconds of fuzzing. The store corpus-replay suite checks the
+    # sum plus a 20-minute build reserve: 8,460 + 1,200 = 9,660 < 10,200.
+    timeout-minutes: 170
+    permissions: { contents: read }
+    env:
+      # env outranks rust-toolchain.toml, as in lint's MSRV check.
+      # libFuzzer's -Z sanitizer flags need nightly (PR CI replays the
+      # corpus on stable instead; this lane is the only nightly
+      # consumer).
+      RUSTUP_TOOLCHAIN: nightly
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: rustup toolchain install nightly --profile minimal
+      # (no rust-src: only needed for -Z build-std, which cargo-fuzz does
+      # not use by default; llvm-tools likewise only for `cargo fuzz
+      # coverage` — the workflow_dispatch DoD check proves the lane
+      # end-to-end.)
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          cache-bin: "false"
+          workspaces: |
+            . -> target
+            crates/granary-core/fuzz -> target
+            crates/granary-store/fuzz -> target
+            crates/granary-client/fuzz -> target
+            crates/granary-fuse/fuzz -> target
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with: { tool: cargo-fuzz@0.13.2 }
+      # --target EXPLICIT: cargo-fuzz defaults to the triple its own
+      # binary was built for — taiki-e's prebuilt is musl-static, and
+      # sanitizers reject static musl (same trap as the local Rosetta
+      # x86_64 default).
+      - run: cd crates/granary-core && cargo fuzz run thresh_chunk --target x86_64-unknown-linux-gnu -- -max_total_time=420 -max_len=20000000
+      - run: cd crates/granary-core && cargo fuzz run grainid_decode --target x86_64-unknown-linux-gnu -- -max_total_time=420 -max_len=4096
+      - run: cd crates/granary-core && cargo fuzz run manifest_decode --target x86_64-unknown-linux-gnu -- -max_total_time=420 -max_len=20000000
+      - run: cd crates/granary-core && cargo fuzz run bin_decode --target x86_64-unknown-linux-gnu -- -max_total_time=420 -max_len=20000000
+      - run: cd crates/granary-core && cargo fuzz run binmap_decode --target x86_64-unknown-linux-gnu -- -max_total_time=420 -max_len=9000000
+      - run: cd crates/granary-core && cargo fuzz run root_decode --target x86_64-unknown-linux-gnu -- -max_total_time=420 -max_len=4096
+      - run: cd crates/granary-core && cargo fuzz run sheaf_decode --target x86_64-unknown-linux-gnu -- -max_total_time=420 -max_len=65536
+      - run: cd crates/granary-core && cargo fuzz run cacheindex_decode --target x86_64-unknown-linux-gnu -- -max_total_time=420 -max_len=65536
+      - run: cd crates/granary-core && cargo fuzz run manifest_walk --target x86_64-unknown-linux-gnu -- -max_total_time=420 -max_len=140000
+      - run: cd crates/granary-core && cargo fuzz run authlog_classify --target x86_64-unknown-linux-gnu -- -max_total_time=420 -max_len=1048576
+      - run: cd crates/granary-core && cargo fuzz run runmarker_decode --target x86_64-unknown-linux-gnu -- -max_total_time=120 -max_len=256
+      - run: cd crates/granary-core && cargo fuzz run mount_control_decode --target x86_64-unknown-linux-gnu -- -max_total_time=120 -max_len=8300
+      - run: cd crates/granary-core && cargo fuzz run support_trigger_decode --target x86_64-unknown-linux-gnu -- -max_total_time=120 -max_len=12402
+      - run: cd crates/granary-core && cargo fuzz run authority_answer_decode --target x86_64-unknown-linux-gnu -- -max_total_time=420 -max_len=256
+      - run: cd crates/granary-core && cargo fuzz run intent_decode --target x86_64-unknown-linux-gnu -- -max_total_time=120 -max_len=1049037
+      - run: cd crates/granary-core && cargo fuzz run archive_name --target x86_64-unknown-linux-gnu -- -max_total_time=120 -max_len=4096
+      - run: cd crates/granary-core && cargo fuzz run retained_submission_decode --target x86_64-unknown-linux-gnu -- -max_total_time=420 -max_len=16777217
+      - run: cd crates/granary-core && cargo fuzz run enrollment_decode --target x86_64-unknown-linux-gnu -- -max_total_time=420 -max_len=5275699
+      - run: cd crates/granary-core && cargo fuzz run debug_grant_decode --target x86_64-unknown-linux-gnu -- -max_total_time=120 -max_len=524
+      # The overlay journal's three codecs; -max_len holds several of the
+      # largest frames (16,429 bytes each) behind a header.
+      - run: cd crates/granary-core && cargo fuzz run overlay_journal_decode --target x86_64-unknown-linux-gnu -- -max_total_time=60 -max_len=65536
+      - run: cd crates/granary-core && cargo fuzz run overlay_discard_decode --target x86_64-unknown-linux-gnu -- -max_total_time=120 -max_len=1024
+      - run: cd crates/granary-core && cargo fuzz run overlay_ownership_decode --target x86_64-unknown-linux-gnu -- -max_total_time=120 -max_len=16777217
+      # Support limits include one byte beyond each format cap, as for
+      # debug grants, so oversize refusal remains reachable. Snapshot
+      # inputs stay bounded at 8 MiB + 1; configuration at 32 KiB + 1.
+      - run: cd crates/granary-core && cargo fuzz run support_manifest_decode --target x86_64-unknown-linux-gnu -- -max_total_time=120 -max_len=1048577
+      - run: cd crates/granary-core && cargo fuzz run support_archive_decode --target x86_64-unknown-linux-gnu -- -max_total_time=120 -max_len=16777217
+      - run: cd crates/granary-core && cargo fuzz run support_snapshot_decode --target x86_64-unknown-linux-gnu -- -max_total_time=120 -max_len=8388609
+      - run: cd crates/granary-core && cargo fuzz run support_configuration_decode --target x86_64-unknown-linux-gnu -- -max_total_time=120 -max_len=32769
+      # The target decodes the bundle archive, manifest and members, so inputs run
+      # one byte beyond BUNDLE_ARCHIVE_MAX (2,097,152 bytes).
+      - run: cd crates/granary-core && cargo fuzz run support_bundle_decode --target x86_64-unknown-linux-gnu -- -max_total_time=120 -max_len=2097153
+      # granary-store's own fuzz workspace: the ingest verify end to
+      # end — decode_bin, the declared-sum pass, per-frame
+      # decompression, blake3, the running bail. -max_len covers the
+      # empty-block scan witness in its corpus (8.1 MB declaring 1 byte).
+      # NOTE: -Zsanitizer=address reaches the
+      # RUST code only. zstd-sys builds libzstd with no CFLAGS from
+      # cargo-fuzz, so the C decompressor is uninstrumented (see
+      # granary-store/src/fuzz_probe.rs). Try CFLAGS=-fsanitize=address
+      # here once the lane is known to run end to end.
+      - run: cd crates/granary-store && cargo fuzz run bin_ingest --target x86_64-unknown-linux-gnu -- -max_total_time=420 -max_len=20000000
+      # granary-client's fuzz workspace: the cache's anchor-file parser,
+      # attacker-writable disk content that holds the freshness floor.
+      # -max_len is the reader's own cap (ANCHOR_FILE_MAX_BYTES): a longer
+      # file is refused before the parser sees it.
+      - run: cd crates/granary-client && cargo fuzz run anchor_decode --target x86_64-unknown-linux-gnu -- -max_total_time=420 -max_len=4096
+      # Request-relative validation of bounded authority answers and identification.
+      - run: cd crates/granary-client && cargo fuzz run authority_validate --target x86_64-unknown-linux-gnu -- -max_total_time=420 -max_len=157
+      # Strict mountinfo bodies and byte-preserving mount-point queries.
+      - run: cd crates/granary-fuse && cargo fuzz run mountinfo_body --target x86_64-unknown-linux-gnu -- -max_total_time=120 -max_len=65536
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: fuzz-artifacts
+          path: crates/granary-core/fuzz/artifacts/
+          # PINNED, not inherited. Every upload step is `if: failure()`, so
+          # when only ONE crate crashes the others' paths match nothing. `warn` IS the
+          # v7 default (action.yml verified at v4.6.2, v7.0.1 and v7.0.2, and a real
+          # single-crate failure on run 31349884464 uploaded green) — pinning
+          # it means a future major cannot flip the highest-consequence
+          # default in this lane out from under a crash we are trying to save.
+          if-no-files-found: warn
+          retention-days: 14
+      # A SECOND step, not a second path on the first: cargo-fuzz writes a
+      # crash reproducer under the workspace it ran in, so the step above
+      # sees nothing at all when granary-store is what crashed — the
+      # input would be discarded silently, which is the one outcome a
+      # fuzz lane must never have. Distinct `name:`, because
+      # upload-artifact STILL hard-fails on a duplicate artifact name at
+      # v7 — artifacts are immutable and `overwrite` defaults to false
+      # (verified in action.yml at v7.0.1 and v7.0.2) — and would take down the run
+      # that was trying to save the crash.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: fuzz-artifacts-store
+          path: crates/granary-store/fuzz/artifacts/
+          # PINNED, not inherited. Every upload step is `if: failure()`, so
+          # when only ONE crate crashes the others' paths match nothing. `warn` IS the
+          # v7 default (action.yml verified at v4.6.2, v7.0.1 and v7.0.2, and a real
+          # single-crate failure on run 31349884464 uploaded green) — pinning
+          # it means a future major cannot flip the highest-consequence
+          # default in this lane out from under a crash we are trying to save.
+          if-no-files-found: warn
+          retention-days: 14
+      # A THIRD step for the same reason as the second: a client crash
+      # writes its reproducer under the client workspace.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: fuzz-artifacts-client
+          path: crates/granary-client/fuzz/artifacts/
+          # PINNED, as on the first upload step.
+          if-no-files-found: warn
+          retention-days: 14
+      # A fuse crash writes its reproducer under the fuse workspace.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: fuzz-artifacts-fuse
+          path: crates/granary-fuse/fuzz/artifacts/
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,12 @@
+{
+  "format_version": 1,
+  "writer_kind": "granary-server",
+  "run_id": "golden-run-0001",
+  "role": "server",
+  "poisoned": false,
+  "request_bytes": 123456,
+  "requests_with_body": 7,
+  "response_bytes_produced": 654321,
+  "drain_outcome": "drained",
+  "listen_addr": "127.0.0.1:4242"
+}

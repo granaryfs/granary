@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+# fixture or filesystem condition	guard
+archive-name/reject-*	reserved namespace grammar
+retained-submission/reject-pins-order	canonical pins
+corrupt	exact-byte check and strict decode
+oversized	complete file cap
+wrong-scope	exact scope digest path binding
+wrong-volume	volume path binding
+wrong-id	publication identity path binding
+complete	terminal completion
+symlink	no-follow regular-file custody
+hardlink	sole-link custody except exact A+L inode retry
+nonregular	regular-file custody
+mode	0600 permissions
+owner	effective uid ownership
+acl	granting descriptor ACL refusal on macOS

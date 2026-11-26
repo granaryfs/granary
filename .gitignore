@@ -1,0 +1,19 @@
+target/
+granary.code-workspace
+*.proptest-regressions
+# Tooling materialises linked worktrees here. Untracked, they show up in
+# `git status --porcelain`, which several conventions read to confirm
+# nothing unexpected is staged — and a nested worktree is the last thing
+# that should ever be committed.
+.claude/worktrees/
+# Python bytecode. `scripts/check-protocol-constants.py` is RUN as a script
+# by the gates, which writes none — but verifying a helper in it (the
+# gloss vocabulary's decade tiling, say) means IMPORTING the module, and an
+# import caches bytecode beside it. That artefact carries no SPDX header,
+# so `reuse lint` fails the gates lane on a file nobody meant to create.
+__pycache__/
+
+# macOS Finder droppings. Untracked, but `reuse lint` scans them and fails
+# the gates lane on missing SPDX headers — a false red that recurs whenever
+# Finder opens a directory.
+.DS_Store

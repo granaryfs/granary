@@ -1,0 +1,70 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+
+[workspace]
+# Virtual manifest: resolver is NOT inferred from member editions — explicit
+# or it silently degrades to v1-with-a-warning.
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.97"
+license = "Apache-2.0"
+repository = "https://github.com/granaryfs/granary"
+publish = false
+
+[workspace.dependencies]
+# Exact pins per dependency-policy rule 4. Add entries ONLY at the
+# milestone that uses them (cargo-shear flags unused workspace deps).
+rustls = "=0.23.46"
+tracing = { version = "=0.1.44", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt", "json"] }
+blake3 = "=1.8.7"     # grain identity (spec §4); its named core-gate exceptions are in deny.core.toml
+fastcdc = "=4.0.1"  # the frozen chunker: a version bump is a format event; MIT exception in deny.core.toml
+criterion = { version = "=0.8.2", default-features = false, features = ["cargo_bench_support"] }  # K4 bench; lean — no rayon/plotters
+proptest = "=1.11.0"  # encoder/decoder + chunker invariants (rule-6 memo)
+zstd = { version = "=0.14.3", default-features = false, features = ["zdict_builder"] }  # one zstd frame per grain: granary-store codec (shipped — the pinned level and bulk API) + granary-bench (bench metric). zstd-sys pinned via Cargo.lock AND deny.toml's version-exact build allowance
+aws-lc-rs = { version = "=1.18.0", default-features = false, features = ["aws-lc-sys"] }  # root signing; defaults would duplicate `untrusted`; NO FIPS claim attaches to these signatures
+# Empirically de-risked forms — do not "simplify" them.
+object_store = { version = "=0.14.1", default-features = false, features = ["aws"] }  # ≥0.14.0 is load-bearing (ring→aws-lc-rs default); `fs` deliberately OFF
+reqwest = { version = "=0.13.4", default-features = false }  # granary-store's no-redirect HTTP client (http_client), installed by the client's --direct-s3 route and the server's store: object_store builds its client with reqwest's default redirect policy and exposes no switch, so granary-store builds it. Already in the lock at exactly this version via object_store; the member names the features object_store itself enables (rustls, http2)
+tokio = { version = "=1.53.3", default-features = false, features = ["rt", "macros", "signal"] }  # object_store is async; `gran publish` runs a current-thread runtime. `signal` added for the mount: `gran mount` is the first long-lived process in this workspace and must exit on SIGINT/SIGTERM by UNMOUNTING rather than dying with the mount in place — and `tokio::signal` does not exist without this feature, which nothing else in the graph enables. It costs ZERO new packages: `mio` and `signal-hook-registry`, the two crates it activates, are already in `supply-chain/inventory.txt` via tokio's own `net`/`rt` closure. That is an EXPECTATION until the inventory delta prints it — see the commit that added the feature
+rcgen = { version = "=0.14.10", default-features = false, features = ["aws_lc_rs", "pem"] }  # DEV-ONLY: the TLS harness mints its own certificates in-test (no committed private key ships in this repository). `default-features` lives HERE and not in the member: on edition 2024 a member override is a hard manifest-load error, not a warning. Dropping `ring` from the defaults is load-bearing — `cargo deny check bans` FAILS on rcgen's default features
+futures-core = { version = "=0.3.34", default-features = false }  # DEV-ONLY: the hostile-backend tests must IMPLEMENT `Stream` to fabricate a chunked, byte-counting response body; production only CALLS it on a `dyn Stream`, which needs no import. Already in the lock via object_store — 0 new packages, `build = false`, no proc-macro
+# The accept loop's transport stack. `tls12` is deliberately NOT
+# declared on tokio-rustls: the server config is TLS-1.3-only by
+# construction, and rustls's own default keeps the TLS-1.2 code available
+# for the negative test's client.
+tokio-rustls = { version = "=0.26.4", default-features = false, features = ["aws_lc_rs", "logging"] }  # already in the lock transitively (object_store → reqwest), so ZERO new packages; its features only forward to rustls features already active
+libc = { version = "=0.2.189", default-features = false }  # The client cache's FreeSpace seam (statfs/statvfs — kernel interfaces, dependency-policy rule 1) and the macOS plain-fsync call the cache uses instead of F_FULLFSYNC. Already `=0.2.189` in Cargo.lock via the permitted cpufeatures->libc edge — this entry adds ZERO new packages, only a direct edge from granary-client
+rustls-pki-types = "=1.15.1"  # The server binary reads its certificate chain and key from PEM PATHS, and `PemObject::pem_file_iter`/`from_pem_file` live here rather than in rustls. Already in the lock via rustls at exactly this version — ZERO new packages; the `std` feature (the file-reading half) is declared on the member line, since only the composition root touches the filesystem
+hyper = { version = "=1.11.1", default-features = false }  # hyper's own `default = []`; the feature list lives on the member line
+hyper-util = { version = "=0.1.20", default-features = false, features = ["server-auto", "server-graceful", "tokio"] }  # server-auto = server + http1 + http2; server-graceful adds tokio/sync; tokio supplies TokioExecutor/TokioTimer/TokioIo
+h2 = "=0.4.18"  # The loopback battery's HTTP/2 client (can send `:path` values and duplicate field lines hyper's own client refuses to build, which several conformance rows need) — granary-server's dev-dependency. ALSO a REGULAR dependency of granary-client, for the retry classifier: `retry.rs`'s reason-scoped seam-retry classifier downcasts a transport failure's source() chain to h2::Error to tell a REFUSED_STREAM reset (RFC 9113 §8.7's non-processing guarantee) and a remote GOAWAY apart from everything else. Already in the lock via hyper's http2 feature — ZERO new packages either way
+http-body-util = "=0.1.5"  # Request/response bodies. Dev-only in granary-net's harness clients; REGULAR in granary-server, whose adapter renders every response body with `Full` and drains request content with `BodyExt::frame`
+hyper-rustls = { version = "=0.27.9", default-features = false }  # The CLIENT's HTTPS connector — an `HttpsConnector` that binds ALPN to hyper-util's h1/h2 selection, which is the part a hand-rolled `Service<Uri>` gets silently wrong. Already in the lock at exactly this version via object_store -> reqwest, so ZERO new packages; `build = false`, no proc-macro. `default-features = false` lives HERE and not on the member line: on edition 2024 a member-only override is a hard manifest-load error. It drops `native-tokio` and `logging` HERE; the member adds only `http1` + `http2`, which is what makes `enable_http1().enable_http2()` compile. It does NOT drop `tls12` from the build: reqwest (reached through object_store's `aws` feature) declares hyper-rustls with `tls12`, and cargo unifies features across the graph, so hyper-rustls and rustls both compile WITH the TLS-1.2 code — `cargo tree -e features -i hyper-rustls` ends `hyper-rustls feature "tls12" -> reqwest v0.13.4`. It changes nothing: `client_tls_config` states `with_protocol_versions(&[&TLS13])` explicitly rather than relying on any feature being absent, and `production_client_config_refuses_a_tls12_only_peer` (granary-net/tests/handshake.rs) drives a TLS-1.2-only peer at the shipped config and watches it refuse. The version list is the guarantee; do not remove it on the strength of a feature flag. Rule-4b owner record in docs/dependency-policy.md
+fuser = { version = "=0.18.0", default-features = false, features = ["macos-no-mount"] }  # The FUSE mount. `macos-no-mount` on EVERY platform, not target-gated — under it nothing leaves the public API (only the private `Mount::new` returns a runtime error) and upstream's own CI type-checks that configuration, while target-gating the DEPENDENCY would remove granary-fuse from clippy and nextest on the dev machine entirely. On Linux without the `libfuse` feature `build.rs` takes the pure-Rust path and needs no C library
+nix = { version = "=0.31.3", default-features = false, features = ["mount"] }  # `gran umount` reaches umount2(2) through the SAFE `nix::mount::umount2` rather than raw libc, which is what keeps `unsafe_code = "forbid"` in granary-fuse. Already in the closure via fuser, which enables `mount` itself — ZERO new packages, ZERO new features. The CALL SITE is `#[cfg(target_os = "linux")]`: nix's apple mount module has no `umount2` and no `MntFlags::MNT_DETACH`
+
+[workspace.lints.rust]
+unsafe_code = "forbid"          # relaxed to `deny` per crate, for named expect sites only, by the table in scripts/check-unsafe-sites.sh. granary-fuse needs no such relaxation: its `fuser::Filesystem` impl compiles under `forbid`, because `fuser`'s API is safe and a dependency's `unsafe` is not ours to license. granary-fuse keeps `forbid` so long as `gran umount` reaches `umount2(2)` via the SAFE `nix::mount::umount2` (nix is already in the lock via fuser) rather than raw libc
+unsafe_op_in_unsafe_fn = "deny" # warn-by-default in edition 2024; load-bearing when fuse swaps tables
+unexpected_cfgs = { level = "deny", check-cfg = ["cfg(granary_sim)"] }  # the sim is reserved as a cfg — a sim *feature* would leak via unification
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+elided_lifetimes_in_paths = "warn"
+
+[workspace.lints.clippy]
+# Groups get priority -1 or clippy's deny-by-default lint_groups_priority
+# hard-fails the build.
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+disallowed_methods = "deny"
+disallowed_macros = "deny"      # warn-by-default; the concurrency bans in clippy.toml are not advisory
+disallowed_types = "allow"      # core opts IN via crate attribute; HashMap is legitimate elsewhere
+
+[profile.release]
+overflow-checks = true          # coding-standards rule 4

@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+--- a/crates/granary-cli/src/main.rs
++++ b/crates/granary-cli/src/main.rs
+@@ -539,5 +539,5 @@
+         #[cfg(feature = "conformance-breakage")]
+         conformance_stderr_checkpoint("wire-snapshot-failed");
+-        terminal::write_line(format_args!("wire-snapshot not written: {error}"));
++        eprintln!("wire-snapshot not written: {error}");
+     }
+ }

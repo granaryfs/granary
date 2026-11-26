@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "granary-net"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "HTTP transport plumbing for the grain protocol: TLS config (both sides); HTTP semantics on TCP in Phase 1 (h1.1 baseline, h2 via ALPN), h3 later behind the same seam"
+
+[dependencies]
+# The cryptographic-randomness seam `secure_random::OsSecureRandom` implements.
+granary-core = { path = "../granary-core" }
+rustls = { workspace = true }
+aws-lc-rs = { workspace = true }  # SHA-256 for the RFC 7469 SPKI pin, and the OS-entropy generator behind `secure_random`; reuses the workspace's existing backend (no sha2)
+tokio = { workspace = true, features = ["net", "io-util", "time", "sync"] }
+tokio-rustls = { workspace = true }
+hyper = { workspace = true, features = ["http1", "http2", "server"] }
+hyper-util = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+rcgen = { workspace = true }      # certificates for the in-memory handshake harness
+proptest = { workspace = true }   # the pin-set membership property over 0..=PIN_SET_MAX
+hyper = { workspace = true, features = ["client"] }  # the accept-loop suite's clients drive hyper's own h1/h2 handshakes
+http-body-util = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[features]
+fips = ["rustls/fips"]
+
+[lints]
+workspace = true

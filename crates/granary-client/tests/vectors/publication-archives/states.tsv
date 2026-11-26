@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+# archive-vector	live-vector	selection	retry
+catalogue	-	Abandoned	idempotent
+catalogue	different-live	Live	keep-live
+catalogue	catalogue	Conflict	unlink-live
+catalogue	conflicting-live	Conflict	refuse

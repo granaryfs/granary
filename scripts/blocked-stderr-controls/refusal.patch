@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+--- a/crates/granary-cli/src/attach.rs
++++ b/crates/granary-cli/src/attach.rs
+@@ -1616,8 +1616,8 @@
+         #[cfg(feature = "conformance-breakage")]
+         crate::conformance_stderr_checkpoint("cache-dir-refusal");
+-        report(format_args!(
++        eprintln!(
+             "gran mount: --cache-dir <path> is required — the mount's whole read path serves \
+              through it for the life of the session"
+-        ));
++        );
+         return Err(MountRefusal::CacheDirRequired);
+     };

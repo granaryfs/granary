@@ -1,0 +1,124 @@
+# UWASL dedup-bench, pinned. https://github.com/UWASL/dedup-bench
+#
+# Used by scripts/bench/dedup-bench-crosscheck.sh. The pin covers the
+# SOURCE, the BUILD CONFIGURATION and the CHUNKER CONFIGURATION: a pin that
+# fixes the commit but lets the flags or the chunker parameters float does not
+# describe the artifact that gets executed, or what it was asked to do.
+#
+# The tag is `Stable`, NOT `v2.0`. GitHub's RELEASE is named v2.0; the only ref
+# `git ls-remote --tags` returns is refs/tags/Stable -> this commit.
+#
+# Supply-chain approval, Adrian, 2026-08-11: APPROVED for this commit, these
+# three overrides, and ZERO source edits. All three are Apple Silicon Homebrew
+# path fixes. `commit` is anchored to the remote by the script's TAG-MOVED
+# check; `make_overrides` is anchored to nothing but this approval, so the
+# script validates it against a NAME allowlist (exactly the three variables
+# below) and a value charset, and refuses anything else — make accepts SHELL=,
+# CC= and LDFLAGS= just as happily, and SHELL= alone executes an arbitrary
+# script as the recipe shell.
+#   INCLUDE_PATH_OPENSSL  Makefile:15 hardcodes /usr/local/opt/openssl@3/include
+#                         — an Intel-Homebrew prefix that does not exist here.
+#                         Pinned for reproducibility and explicitness rather
+#                         than because the build cannot proceed without it:
+#                         /opt/homebrew/include/openssl is a symlink into the
+#                         Cellar (verified), so EXTRA_COMPILER_FLAGS alone
+#                         would satisfy `#include <openssl/...>` on this
+#                         machine. Pinning it means the include actually used
+#                         is the one recorded here, not whatever a symlink
+#                         happens to point at.
+#   LD_FLAGS              Makefile:23 is `-L /usr/local/opt/openssl@3/lib
+#                         -lcrypto -lxxhash`: same dead prefix, and -lxxhash
+#                         has no -L at all (libxxhash lives in /opt/homebrew/lib).
+#                         Written in clang's -Wl, comma form because a make
+#                         override recorded here MUST be a single whitespace-free
+#                         VAR=value token — the script splits this line on
+#                         whitespace and refuses any token without an `=`, so a
+#                         space-separated `-L a -L b -lcrypto -lxxhash` is
+#                         rejected outright (verified: "make_overrides token not
+#                         a plain VAR=value: -L/opt/homebrew/lib"). Verified for
+#                         THESE tokens, by `clang -### -Wl,-L/opt/homebrew/lib,
+#                         -lcrypto`: clang splits the comma list and the ld
+#                         invocation carries `-L/opt/homebrew/lib` and
+#                         `-lcrypto` as separate arguments. That is the whole
+#                         claim — it is not a general statement about arbitrary
+#                         flags in -Wl, form.
+#   EXTRA_COMPILER_FLAGS  dedup/include/hashing/xxhash_hashing.hpp:16 includes
+#                         "xxhash.h" and the Makefile has NO include variable
+#                         for xxhash; /opt/homebrew/include is not on clang's
+#                         default search path. Makefile:53 interpolates
+#                         ${EXTRA_COMPILER_FLAGS}, which is the only hook.
+# Without the -L paths the link fails outright: `ld: library 'crypto' not found`.
+#
+# config_sha256 is the digest of bench/datasets/dedup-bench.config, asserted
+# by name at every use. The config is read from the WORKING TREE, and both of
+# the script's set-identity controls are structurally blind to it: mutating
+# buffer_size, the min/avg/max block sizes or the normalization level moved
+# the published realized mean by -59% to +375% while `--self-test` printed ok
+# every time.
+#
+# selftest_mean_lo/hi is the realized-mean window for the script's own
+# deterministic self-test corpus (SHAKE-256 of a fixed seed, 134,217,728 bytes
+# per tree — both constants live in the script). It is the parameter-SENSITIVE
+# control: the identical/disjoint assertions are set-identity properties that
+# hold for any deterministic content-defined chunker at any parameters, so
+# they cannot see the configuration at all, while this window is a function of
+# the chunker and its parameters and nothing else. Measured at this commit,
+# these overrides and this config: both trees give 97 chunks and a realized
+# mean of 1,383,687 B. The window is that value +/- 5%.
+#
+# Calibrated by mutating the config AND updating config_sha256 to match — the
+# co-edit the digest alone cannot catch — and confirming each mutation lands
+# outside the window or is refused outright:
+#   buffer_size 8 MiB -> 1 MiB    refused (buffer_size < fastcdc_max_block_size)
+#   min -> 8 MiB (min == max)     refused (FastCDC would degenerate to whole-file)
+#   avg -> 4 KiB                  refused (block sizes not ordered min<=avg<=max)
+#   normalization 1 -> 3          mean 1,147,160  (-17.1%, outside)
+#   normalization 1 -> 2          mean 1,254,371  ( -9.3%, outside)
+#   avg 1 MiB -> 512 KiB          mean   775,825  (-43.9%, outside)
+tag Stable
+commit 19c24ccdf98a60314e8c712a23fbd2b0255ca5ab
+make_overrides INCLUDE_PATH_OPENSSL=/opt/homebrew/opt/openssl@3/include LD_FLAGS=-Wl,-L/opt/homebrew/opt/openssl@3/lib,-L/opt/homebrew/lib,-lcrypto,-lxxhash EXTRA_COMPILER_FLAGS=-I/opt/homebrew/include
+# config_sha256 is the digest of the legacy config's whole file, header
+# comments included. A co-edit of config + config_sha256 is the mutation
+# this pin's own calibration notes describe, and assert_config's comment
+# names it as expected: the digest proves config-matches-pin, while HEAD
+# (assert_committed) is what anchors approval.
+config_sha256 b4f20b1e6cdc7b74d69e6e55ba045a4c16db7fbc8cd4d71fc9c2ec5601f932dc
+selftest_mean_lo 1314503
+selftest_mean_hi 1452871
+
+# A second chunker configuration, for
+# `scripts/bench/dedup-bench-crosscheck.sh`'s `128k` mode. The legacy
+# lines above are unread by this mode.
+#
+# `commit`, `tag` and `make_overrides` above are NOT duplicated here:
+# the external source, its build and its overrides are identical for
+# both modes — only the CHUNKER configuration differs, so only the
+# chunker-configuration fields (`config_sha256`, `selftest_mean_lo/hi`)
+# get a second, `_128k`-suffixed copy.
+#
+# config_sha256_128k is the digest of
+# bench/datasets/dedup-bench-128k.config: granary's current shipped
+# tuple (min 131072 / avg 262144 / max 2097152 / normalization 1),
+# asserted by name at every `128k`-mode use, the
+# same way config_sha256 is for `legacy`.
+#
+# selftest_mean_lo_128k/hi_128k is the realized-mean window for the
+# SAME deterministic self-test corpus (same two SHAKE-256 seeds, same
+# 134,217,728 bytes per tree — the constants live in the script and are
+# mode-independent), calibrated the SAME way the legacy window above was:
+# run `128k --self-test` against a pin with config_sha256_128k already
+# committed and these two fields still `<unset>`; the identical- and
+# disjoint-tree `crosscheck` calls print `realized_mean=...` to stdout
+# before the (then-unavoidable) refusal on the unset window; take that
+# observed value, +/- 5%, as the window; commit; re-run to confirm green.
+# Observed at this commit, these overrides and dedup-bench-128k.config's values,
+# via exactly that run (`128k --self-test` against this pin with
+# config_sha256_128k already committed and these two fields `<unset>`):
+# identical-tree (x/x) realized mean = 345,032 B, 389 chunks;
+# disjoint-tree (x/y) realized mean = 345,032 B, 389 chunks — the two
+# calls agree exactly. The window is that value +/- 5%, same convention
+# as selftest_mean_lo/hi above.
+config_sha256_128k 035d7678addde5f3b21a2fb0a0c6f02758649d0d1d6f63a332f53b82e0b86ebd
+selftest_mean_lo_128k 327780
+selftest_mean_hi_128k 362284

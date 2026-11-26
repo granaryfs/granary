@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+name: fips
+on:
+  schedule:
+    - cron: "0 6 * * 6"
+  push:
+    branches: [main]
+    paths: ["Cargo.lock"]   # FIPS breaks surface with the bump that caused them
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: fips-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_BUILD_WARNINGS: deny
+jobs:
+  fips-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { cache-bin: "false" }
+      # cmake/go/perl are preinstalled on the runner image; verify in the first run's log
+      - run: cargo build -p granary-net --features fips --locked
+      # the lane the docs say "covers" the fips feature must actually lint and test it
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with: { tool: cargo-nextest@0.9.143 }
+      - run: cargo clippy -p granary-net --features fips --all-targets
+      - run: cargo nextest run -p granary-net --features fips --locked
+      - run: cargo build -p granary-store --features fips --locked
+      - run: cargo clippy -p granary-store --features fips --all-targets
+      - run: cargo nextest run -p granary-store --features fips --locked
+  beta-canary:
+    # non-blocking: toolchain breakage arrives as a scheduled red X, not a
+    # surprise on bump day (bundled with the fips cron)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions: { contents: read }
+    env:
+      RUSTUP_TOOLCHAIN: beta   # env outranks rust-toolchain.toml, as in lint's MSRV check
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: rustup toolchain install beta --profile minimal
+      - run: cargo check --workspace --locked

@@ -1,0 +1,140 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+  # ROOT cargo: security updates only. Version PRs are turned off
+  # (`open-pull-requests-limit: 0`; security PRs are exempt from the limit)
+  # because a root bump that reaches a nested fuzz workspace leaves that
+  # workspace's own Cargo.lock stale, and the --locked gates refuse it:
+  # dependabot-core #11500 ("Cargo.lock not updated for crates outside cargo
+  # workspace which depends on crates in workspace"). Routine bumps are made by
+  # hand across all five locks, with each dependency reviewed on its own.
+  - package-ecosystem: cargo
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    open-pull-requests-limit: 0
+    ignore:
+      # The format contract: the chunker, the content hash and the grain frame
+      # encoder change only through the format-object process (canonical
+      # encoding, golden vectors), never as a bot PR, a patch release included.
+      # An advisory against one is handled by hand under that process.
+      - dependency-name: fastcdc
+        versions: [">=0"]
+      - dependency-name: blake3
+        versions: [">=0"]
+      - dependency-name: zstd
+        versions: [">=0"]
+  # The four nested fuzz workspaces each have their OWN Cargo.lock, which the
+  # root entry above never updates. Nothing bumped them: the client's lock sat
+  # on a yanked chacha20 0.10.1 while root held 0.10.2, and it drifted
+  # errno -> windows-sys onto a 0.52 tree carrying eight extra build scripts
+  # the root workspace does not build. docs/dependency-policy.md:25 gives build
+  # and dev dependencies the same treatment as any other.
+  #
+  # GROUPED, and the root entry above deliberately is NOT.
+  #
+  # MEASURED the first time these three entries went live: they opened SEVEN
+  # PRs at once, and four of them duplicated a root PR already open (hyper, h2,
+  # fastcdc, blake3) because granary-client/fuzz pulls the client's whole
+  # production graph. Every PR triggers the full ci.yml matrix on a
+  # FOUR-RUNNER self-hosted fleet, and that flood starved the push run that
+  # introduced it — five of its twelve jobs sat queued behind them.
+  #
+  # The duplication is permanent, not a one-time catch-up: every future root
+  # bump has a fuzz twin. So one grouped PR per workspace per week.
+  #
+  # The line: the SHIPPED graph gets per-dependency PRs, because
+  # dependency-policy rule 3 wants each new build script and proc-macro
+  # reviewed on its own. These four graphs ship nothing — they are dev-only
+  # fuzz tooling, and the review question is "does the target still build",
+  # not "what does this build script do". Grouping the root entry would merge
+  # unrelated production bumps into one unreviewable PR; grouping these costs
+  # nothing.
+  #
+  # `lockfile-only` IS LOAD-BEARING, and it is here because of a near-miss.
+  #
+  # Each fuzz crate reaches its dependencies through `granary-<x> = { path =
+  # ".." }` — a path dep on a workspace MEMBER, whose versions are pinned in
+  # the ROOT `[workspace.dependencies]`. So to raise a version in a FUZZ lock,
+  # dependabot edited the ROOT Cargo.toml. Observed on its first grouped run:
+  # a PR titled "bump the client-fuzz group" proposed
+  #   fastcdc  "=4.0.1" -> "=5.0.0"   # PINNED FORMAT CONTRACT
+  #   blake3   "=1.8.6" -> "=1.8.7"   # grain identity
+  #   zstd    "=0.13.3" -> "=0.14.0"  # per-grain frame encoder
+  # — the chunking algorithm and the content hash, arriving as a dev-tooling
+  # bump. It also left the root Cargo.lock stale, so every `--locked` gate went
+  # red and the whole run failed. The gates caught it; that is them working,
+  # and it is not a reason to let the PR be generated.
+  #
+  # What these four entries are FOR is the nested locks' TRANSITIVE closure —
+  # which is where the yanked chacha20 0.10.1 and the errno -> windows-sys
+  # divergence actually lived, and which no manifest pins. `lockfile-only`
+  # maintains exactly that and never touches a manifest.
+  #
+  # The format pins are excluded from every cargo entry (each `ignore` block),
+  # since a pinned format crate changes only through the format-object process.
+  - package-ecosystem: cargo
+    directory: /crates/granary-core/fuzz
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    versioning-strategy: lockfile-only
+    open-pull-requests-limit: 2
+    groups:
+      core-fuzz: { patterns: ["*"] }
+    ignore:
+      - dependency-name: fastcdc
+        versions: [">=0"]
+      - dependency-name: blake3
+        versions: [">=0"]
+      - dependency-name: zstd
+        versions: [">=0"]
+  - package-ecosystem: cargo
+    directory: /crates/granary-store/fuzz
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    versioning-strategy: lockfile-only
+    open-pull-requests-limit: 2
+    groups:
+      store-fuzz: { patterns: ["*"] }
+    ignore:
+      - dependency-name: fastcdc
+        versions: [">=0"]
+      - dependency-name: blake3
+        versions: [">=0"]
+      - dependency-name: zstd
+        versions: [">=0"]
+  - package-ecosystem: cargo
+    directory: /crates/granary-client/fuzz
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    versioning-strategy: lockfile-only
+    open-pull-requests-limit: 2
+    groups:
+      client-fuzz: { patterns: ["*"] }
+    ignore:
+      - dependency-name: fastcdc
+        versions: [">=0"]
+      - dependency-name: blake3
+        versions: [">=0"]
+      - dependency-name: zstd
+        versions: [">=0"]
+  - package-ecosystem: cargo
+    directory: /crates/granary-fuse/fuzz
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    versioning-strategy: lockfile-only
+    open-pull-requests-limit: 2
+    groups:
+      fuse-fuzz: { patterns: ["*"] }
+    ignore:
+      - dependency-name: fastcdc
+        versions: [">=0"]
+      - dependency-name: blake3
+        versions: [">=0"]
+      - dependency-name: zstd
+        versions: [">=0"]

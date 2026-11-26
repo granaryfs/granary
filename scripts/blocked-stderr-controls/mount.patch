@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+--- a/crates/granary-cli/src/attach.rs
++++ b/crates/granary-cli/src/attach.rs
+@@ -2344,5 +2344,6 @@
+         fs.set_breakage(breakage);
+         crate::conformance_stderr_checkpoint("banner");
+-        emit_breakage_banner(breakage.name(), log);
++        let _ = log;
++        emit_breakage_banner(breakage.name(), &mut std::io::stderr());
+     }
+ 

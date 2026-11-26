@@ -1,0 +1,83 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+version = 1
+
+[[annotations]]
+path = ["**/*.md", ".gitignore", ".claude/**", ".vscode/**", ".github/**",
+        "Cargo.lock", "docs/**", "supply-chain/**", "bench/results/**",
+        "bench/datasets/**",
+        # JSON cannot carry a comment header; the sibling .sh files do.
+        "scripts/review/*.json",
+        # The POSIX known-failure list carries SPDX keys, but at ~340 KB
+        # `reuse lint` no longer finds them (reuse 6.2.0: rc 1 naming it).
+        "scripts/posix-known-failures.json",
+        # The exit-status baseline: JSON, same reason as the list above.
+        "scripts/posix-exit-baseline.json",
+        # per-crate, not crates/* — a wildcard would silently Apache-stamp
+        # future AGPL-crate fixtures. Grow per crate, deliberately.
+        "crates/granary-core/tests/vectors/**",
+        # proptest writes tests/*.proptest-regressions on a failing
+        # property (the workspace idiom is to COMMIT those seeds); the
+        # file carries no header, so without an annotation `reuse lint`
+        # stacks a licensing failure on top of the real test failure.
+        # Per-crate on purpose, same AGPL-stamping rule as above.
+        "crates/granary-core/tests/*.proptest-regressions",
+        "crates/granary-bench/tests/*.proptest-regressions",
+        "crates/granary-net/tests/*.proptest-regressions",
+        "crates/granary-store/tests/vectors/**",
+        "crates/granary-client/tests/fixtures/**",
+        "crates/granary-client/tests/vectors/publication-archives/**",
+        # granary-cli's two fixtures moved here with the binary that
+        # reads them (determinism_v1.tar, determinism_v1.root). Neither
+        # carries an SPDX header — they are DATA — so this annotation is
+        # the only thing licensing them, and it does not follow a file
+        # across a directory. EXECUTED at the move: `reuse lint -q` was
+        # rc 1 naming both until this line existed. Per-crate, not
+        # `crates/*`, for the same AGPL-stamping reason as above.
+        "crates/granary-cli/tests/fixtures/**",
+        "crates/granary-net/tests/fixtures/**",
+        "crates/granary-core/fuzz/corpus/**",
+        "crates/granary-core/fuzz/Cargo.lock",
+        "crates/granary-core/fuzz/.gitignore",
+        # granary-store's fuzz workspace, three lines and no
+        # `crates/*/fuzz/**`: the wildcard would Apache-stamp a future
+        # granary-server fixture, which is the AGPL crate.
+        "crates/granary-store/fuzz/corpus/**",
+        "crates/granary-store/fuzz/Cargo.lock",
+        "crates/granary-store/fuzz/.gitignore",
+        # granary-client's fuzz workspace, same three lines, same
+        # reason: no `crates/*/fuzz/**` wildcard here either.
+        "crates/granary-client/fuzz/corpus/**",
+        "crates/granary-client/fuzz/Cargo.lock",
+        "crates/granary-client/fuzz/.gitignore",
+        # granary-fuse uses the same explicit data paths.
+        "crates/granary-fuse/fuzz/corpus/**",
+        "crates/granary-fuse/fuzz/Cargo.lock",
+        "crates/granary-fuse/fuzz/.gitignore"]
+# no crates/*/LICENSE entry: reuse ignores LICENSE-named files entirely,
+# and annotating them would nominally stamp the server's AGPL text as
+# Apache-2.0
+# override, NOT aggregate: aggregate still content-scans annotated files,
+# and docs quoting SPDX lines as examples
+# break the lint with invalid-expression errors. For docs/config,
+# REUSE.toml alone is authoritative;
+# source files are outside these paths and their headers stay scanned.
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Adrian Ana <adrian@adrianana.com>"
+SPDX-License-Identifier = "Apache-2.0"
+
+# ---------------------------------------------------------------------------
+# granary-server is the ONE AGPL crate, so its fixtures get their OWN block
+# with their OWN identifier. They are deliberately NOT added to the list
+# above: that block stamps Apache-2.0, and the comments in it say three
+# times over why a `crates/*` wildcard is refused — "a wildcard would
+# silently Apache-stamp future AGPL-crate fixtures". This is that future
+# fixture, and the naive fix (append one path to the list above) is exactly
+# the mis-licensing those comments exist to prevent. Added for the
+# server's wire-snapshot golden; JSON cannot carry a comment header, which is
+# the same reason the sibling entries above exist.
+[[annotations]]
+path = ["crates/granary-server/tests/fixtures/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Adrian Ana <adrian@adrianana.com>"
+SPDX-License-Identifier = "AGPL-3.0-or-later"

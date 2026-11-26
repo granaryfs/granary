@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+#
+# Citation controls for document and script changes. They run independently
+# from the build suites and need no Rust toolchain.
+name: docs-gates
+on:
+  push:
+    branches: [main]
+    paths: ['docs/**', '**/*.md', 'scripts/**']
+  pull_request:
+    paths: ['docs/**', '**/*.md', 'scripts/**']
+  workflow_dispatch:
+permissions: {}
+jobs:
+  docs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: { contents: read }
+    steps:
+      # `fetch-depth: 0` is LOAD-BEARING for check-citations.py. It verifies a
+      # frozen citation by reading the file AT the sha the freeze names, which
+      # needs history; `actions/checkout` defaults to depth 1, and the gate
+      # correctly REFUSED rather than certify what it could not read. Proved in
+      # a real `git clone --depth 1`: 35 citations reported unverifiable, exit
+      # 1, with this flag named in the message.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false, fetch-depth: 0 }
+      # >>> THE ADR INDEX GENERATOR AND THE SCOPE-COMPLEMENT GATE RUN
+      # IN A NON-SHIPPING CI WORKFLOW. <<< Both have a subject that
+      # does not ship — the ADR corpus and the publication partition — so
+      # neither can be invoked from a workflow that DOES ship. The non-shipping
+      # CI workflow carries an unfiltered trigger, so it also runs on every
+      # commit that the path filters here or in `ci.yml` skip.
+      #
+      # The citation gate reads `docs/adr/` AND `scripts/`, which is why
+      # `scripts/**` joins this workflow's paths: a shell edit that moves a
+      # cited line is exactly as able to break a citation as a prose edit, and
+      # this dedicated workflow must include both kinds of input. It also
+      # runs in the main CI gate. Self-test first: the tree
+      # is at zero findings, so a mutation that only blinds the gate leaves the
+      # real run green.
+      - run: python3 -I scripts/check-citations.py --self-test
+      # `--output`: the venue that is true in BOTH repositories, because this workflow ships
+      # and their corpora differ. No coverage floor — see the note in `ci.yml`.
+      # The SOURCE venue, with its six thresholds, runs only where its corpus exists.
+      - run: python3 -I scripts/check-citations.py --output

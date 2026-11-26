@@ -1,0 +1,1774 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 9 * * *'
+  workflow_dispatch:   # full run after runner repairs or a freshness alarm
+    inputs:
+      posix_conformance:
+        description: Run the pinned POSIX selection and unlink control in fuse
+        type: boolean
+        default: false
+permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+env:
+  CARGO_BUILD_WARNINGS: deny        # covers clippy too; cache-safe
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
+  CARGO_INCREMENTAL: "0"
+# Forks and maintainer changes run on disposable standard hosted VMs.
+# The public workflow guard refuses private runner routes and write permissions.
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: { contents: read }
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false, fetch-depth: 0 }
+      - name: classifier and aggregate refusal controls
+        run: python3 -I scripts/ci-changes.py --self-test
+      - name: classify the merge
+        id: mode
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          mode=$(python3 -I scripts/ci-changes.py ci-mode --event "$EVENT" --head "$HEAD" --base "$BASE")
+          printf 'ci-changes mode=%s\n' "$mode"
+          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
+  lint:
+    runs-on: ubuntu-24.04
+    # Step caps bound hangs (15 min or less for clippy, doc and fmt).
+    # The job cap bounds the whole job, including rust-cache's post-job save.
+    timeout-minutes: 40
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 5
+        with: { persist-credentials: false }
+      - name: check runner workspace permissions
+        id: workspace-guard
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          dir="$GITHUB_WORKSPACE"
+          while :; do
+            case "$(uname -s)" in
+              Darwin) mode=$(stat -f '%Op' "$dir") ;;
+              Linux) mode=$(stat -c '%a' "$dir") ;;
+              *) echo 'unsupported workspace permission venue' >&2; exit 1 ;;
+            esac
+            if (( (8#$mode & 0022) != 0 && (8#$mode & 01000) == 0 )); then echo "runner $RUNNER_NAME: group/other-writable directory without sticky bit: $dir" >&2; exit 1; fi
+            [ "$dir" != / ] || break
+            dir=${dir%/*}
+            dir=${dir:-/}
+          done
+      # cache OK in CI lanes; NEVER in release/publish workflows (cache poisoning)
+      # cache-bin: false is LOAD-BEARING on a persistent self-hosted runner.
+      # The post step otherwise prunes ${CARGO_HOME}/bin and deletes rustup
+      # itself, leaving cargo/rustc/rustfmt as dangling symlinks — measured
+      # 2026-08-16, toolchain destroyed after ONE job. Harmless on hosted
+      # runners, which are discarded anyway, so set it unconditionally.
+      # `workspaces` because this job is the only one that builds the
+      # four fuzz workspaces, and each is its OWN cargo workspace with
+      # its own lockfile and its own `target/`. With the input unset the
+      # action defaults to `. -> target` alone, so every fuzz clippy
+      # step below paid a FULL uncached build on every PR — the client's
+      # worst of all, since that workspace pulls granary-client's whole
+      # dependency graph (aws-lc-rs, hyper-rustls, tokio) to reach one
+      # anchor-file parser. Same `path -> target` spelling fuzz.yml
+      # already uses. Listing `.` explicitly is required: naming any
+      # workspace replaces the default rather than adding to it.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        timeout-minutes: 15
+        with:
+          cache-bin: "false"
+          workspaces: |
+            . -> target
+            crates/granary-core/fuzz -> target
+            crates/granary-store/fuzz -> target
+            crates/granary-client/fuzz -> target
+            crates/granary-fuse/fuzz -> target
+      - run: cargo fmt --check
+        timeout-minutes: 5
+      # NOT --all-features: that would build the fips tree (cmake+go+perl)
+      # on every merge — the fips LANE covers that feature
+      - run: cargo clippy --workspace --all-targets
+        timeout-minutes: 15
+      - run: cargo doc --workspace --no-deps
+        timeout-minutes: 15
+        env: { RUSTDOCFLAGS: "-D warnings" }
+      - name: Linux rustdoc surface is present
+        timeout-minutes: 5
+        run: |
+          bash scripts/check-linux-rustdoc.sh --self-test
+          bash scripts/check-linux-rustdoc.sh "${CARGO_TARGET_DIR:-target}/doc"
+      # the fuzz crate is its own workspace: nothing else in PR CI builds
+      # it, and the weekly lane auto-disables — a rename would bitrot
+      # silently. Stable only; nightly stays weekly.
+      # CLIPPY, not `check`: a fuzz crate compiling is not the question.
+      # `crates/granary-client/clippy.toml` is the nearest clippy config
+      # for the client's fuzz workspace as well, so the filesystem ban
+      # governs that crate — and under `cargo check` it never ran there
+      # at all.
+      - run: cargo clippy --manifest-path crates/granary-core/fuzz/Cargo.toml --all-targets --locked
+        timeout-minutes: 15
+      - run: cargo clippy --manifest-path crates/granary-store/fuzz/Cargo.toml --all-targets --locked
+        timeout-minutes: 15
+      - run: cargo clippy --manifest-path crates/granary-client/fuzz/Cargo.toml --all-targets --locked
+        timeout-minutes: 15
+      - run: cargo clippy --manifest-path crates/granary-fuse/fuzz/Cargo.toml --all-targets --locked
+        timeout-minutes: 15
+      # THE LINT LANE'S POSITIVE CONTROL. Every step above asks whether
+      # the code passes clippy; none asks whether the filesystem ban is
+      # still switched on. The gates job's check-fsguard-sites.sh reads
+      # the files that would make it fire and cannot see whether clippy
+      # loaded any of them. This plants a bare std::fs::create_dir_all
+      # in granary-client, runs clippy, requires a
+      # clippy::disallowed_methods diagnostic on that exact span, and
+      # restores the file. It runs after every clippy step above and before
+      # the moved checks below, so their failures cannot skip it. The trap
+      # restores the file and the probe verifies the restore, so no plant
+      # reaches a later step's build.
+      - run: ./scripts/probes/fsguard-dormant-ban-oracle.sh
+        timeout-minutes: 15
+      # The checks below were separate jobs. Each runs even when an earlier
+      # lint step failed, but only once checkout and the workspace
+      # permission guard have passed.
+      - uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        if: ${{ !cancelled() && steps.workspace-guard.outcome == 'success' }}
+        timeout-minutes: 5
+        with: { advanced-security: false }
+      # K2's local leg as a per-merge gate: the pinned portable MinIO
+      # binary (SHA-verified by the harness every run), cached by release
+      # string.
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        if: ${{ !cancelled() && steps.workspace-guard.outcome == 'success' }}
+        timeout-minutes: 15
+        with: { tool: cargo-nextest@0.9.143 }
+      # The pinned action uses node24 and requires runner >= 2.327.1.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: ${{ !cancelled() && steps.workspace-guard.outcome == 'success' }}
+        timeout-minutes: 15
+        with:
+          path: target/minio/minio-*
+          key: minio-RELEASE.2025-09-07T16-13-09Z-linux-amd64
+      - run: ./scripts/minio-harness.sh test
+        if: ${{ !cancelled() && steps.workspace-guard.outcome == 'success' }}
+        timeout-minutes: 15
+      - name: derive MSRV from workspace rust-version
+        id: msrv
+        if: ${{ !cancelled() && steps.workspace-guard.outcome == 'success' }}
+        timeout-minutes: 15
+        # jq is preinstalled on runners. The .0 suffix is LOAD-BEARING: rust-version
+        # is "1.97", but a bare "1.97" toolchain resolves to the latest patch, which
+        # stops matching rust-version at the first toolchain bump
+        shell: bash
+        run: |
+          MSRV=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].rust_version').0
+          [[ $MSRV =~ ^1\.[0-9]+\.0$ ]] || { echo "invalid MSRV toolchain: '$MSRV'" >&2; exit 1; }
+          echo "MSRV=$MSRV" >> "$GITHUB_OUTPUT"
+      - run: rustup toolchain install "$MSRV" --profile minimal
+        if: ${{ !cancelled() && steps.workspace-guard.outcome == 'success' }}
+        timeout-minutes: 15
+        env: { MSRV: "${{ steps.msrv.outputs.MSRV }}" }
+      # RUSTUP_TOOLCHAIN is LOAD-BEARING: env outranks rust-toolchain.toml, so
+      # without it the step silently checks the pin instead of the MSRV. It is
+      # step-scoped so no later lint step runs on the MSRV compiler.
+      # CARGO_BUILD_WARNINGS=warn: a compatibility check, not a lint check;
+      # older and newer compilers warn differently.
+      # The MSRV check, MinIO test build and musl build share lint's rust-cache entry.
+      # The first successful lint run that misses the cache key saves their dependencies.
+      # Cargo keys artifacts by compiler version, so the MSRV and pinned toolchains
+      # use separate artifacts.
+      - name: check workspace on MSRV
+        if: ${{ !cancelled() && steps.workspace-guard.outcome == 'success' }}
+        timeout-minutes: 15
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.MSRV }}
+          CARGO_BUILD_WARNINGS: warn
+        run: |
+          [[ $RUSTUP_TOOLCHAIN =~ ^1\.[0-9]+\.0$ ]] || { echo "invalid MSRV toolchain: '$RUSTUP_TOOLCHAIN'" >&2; exit 1; }
+          cargo check --workspace --locked
+      # An aarch64 musl leg needs its own job on ubuntu-24.04-arm (GitHub's fleet).
+      # Add that job to ci-green's needs and to SKIPPABLE (scripts/ci-changes.py)
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+        if: ${{ !cancelled() && steps.workspace-guard.outcome == 'success' }}
+        timeout-minutes: 25
+      - run: rustup target add x86_64-unknown-linux-musl
+        if: ${{ !cancelled() && steps.workspace-guard.outcome == 'success' }}
+        timeout-minutes: 25
+      # release profile kept deliberately: CI's only release-profile compile
+      # (exercises overflow-checks = true)
+      - run: cargo build --release --target x86_64-unknown-linux-musl -p granary-cli -p granary-client -p granary-server
+        if: ${{ !cancelled() && steps.workspace-guard.outcome == 'success' }}
+        timeout-minutes: 25
+      - name: assert static
+        if: ${{ !cancelled() && steps.workspace-guard.outcome == 'success' }}
+        timeout-minutes: 25
+        # x86_64-musl emits static-PIE ("static-pie linked"); aarch64 emits
+        # "statically linked" — match both or the x86 leg is red
+        run: |
+          file target/x86_64-unknown-linux-musl/release/gran | grep -Eq "statically linked|static-pie linked"
+          file target/x86_64-unknown-linux-musl/release/granary-server | grep -Eq "statically linked|static-pie linked"
+        # NOTE: the server binary carries granary-net (rustls + aws-lc-rs),
+        # so this step is the static-link exercise of aws-lc-on-musl.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: record server process baseline
+        run: python3 -I scripts/check-server-processes.py begin --state "$RUNNER_TEMP/server-processes.json" --root "$GITHUB_WORKSPACE" --root "$RUNNER_TEMP"
+      - name: process cleanup controls
+        run: |
+          python3 -I scripts/check-server-processes.py self-test --public
+          python3 -I scripts/check-server-processes.py live-self-test
+      - name: check runner workspace permissions
+        run: |
+          set -euo pipefail
+          dir="$GITHUB_WORKSPACE"
+          while :; do
+            case "$(uname -s)" in
+              Darwin) mode=$(stat -f '%Op' "$dir") ;;
+              Linux) mode=$(stat -c '%a' "$dir") ;;
+              *) echo 'unsupported workspace permission venue' >&2; exit 1 ;;
+            esac
+            if (( (8#$mode & 0022) != 0 && (8#$mode & 01000) == 0 )); then echo "runner $RUNNER_NAME: group/other-writable directory without sticky bit: $dir" >&2; exit 1; fi
+            [ "$dir" != / ] || break
+            dir=${dir%/*}
+            dir=${dir:-/}
+          done
+      # cache-bin: false is LOAD-BEARING on a persistent self-hosted runner.
+      # The post step otherwise prunes ${CARGO_HOME}/bin and deletes rustup
+      # itself, leaving cargo/rustc/rustfmt as dangling symlinks — measured
+      # 2026-08-16, toolchain destroyed after ONE job. Harmless on hosted
+      # runners, which are discarded anyway, so set it unconditionally.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { cache-bin: "false" }
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with: { tool: cargo-nextest@0.9.143 }
+      - name: Require the Linux metrics listener rows
+        if: runner.os == 'Linux'
+        run: |
+          listing=$(cargo nextest list --locked -p granary-net -p granary-cli -p granary-client -E 'test(metrics_linux_)')
+          for anchor in \
+            'metrics_listener::tests::metrics_linux_tls_head_byte_cap_with_controlled_reads' \
+            'metrics_listener::tests::metrics_linux_occupied_and_free_ipv4_ipv6' \
+            'metrics_listener::tests::metrics_linux_fifth_connection_closes_and_cancellation_drains' \
+            'attach::metrics_export::tests::metrics_linux_occupied_degrades_and_invalid_configuration_refuses' \
+            'metrics::tests::metrics_linux_stalled_snapshot_allows_recording_collection_and_cancellation'; do
+            printf '%s\n' "$listing" | grep -Eq "^[^[:space:]]+ ${anchor}$"
+          done
+      - run: cargo nextest run --profile ci --locked
+      # The RESOLVED-GRAPH licence-boundary gate: `check-licence-boundary.sh`
+      # reads committed TEXT and names what a content scan cannot reach; this
+      # reads `cargo metadata`'s resolve graph and rustc's own dep-info,
+      # which closes exactly those gaps. It runs here, after nextest, so its
+      # default-features build is largely incremental on this job's own; its
+      # second build compiles what the non-fips, non-default features add.
+      # Self-test first, same shape as every other gate with one.
+      - run: python3 -I scripts/check-licence-resolved.py --self-test
+      - run: python3 -I scripts/check-licence-resolved.py
+      - run: cargo test --doc --locked
+      - name: no server may survive this job
+        if: always()
+        run: python3 -I scripts/check-server-processes.py check --cleanup --state "$RUNNER_TEMP/server-processes.json"
+  test-macos:
+    runs-on: macos-26
+    timeout-minutes: 35
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: record hosted capacity and storage
+        run: |
+          sw_vers
+          uname -m
+          sysctl hw.ncpu hw.memsize
+          df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
+      - name: record server process baseline
+        run: python3 -I scripts/check-server-processes.py begin --state "$RUNNER_TEMP/server-processes.json" --root "$GITHUB_WORKSPACE" --root "$RUNNER_TEMP"
+      - name: check runner workspace permissions
+        id: workspace-guard
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          dir="$GITHUB_WORKSPACE"
+          while :; do
+            case "$(uname -s)" in
+              Darwin) mode=$(stat -f '%Op' "$dir") ;;
+              Linux) mode=$(stat -c '%a' "$dir") ;;
+              *) echo 'unsupported workspace permission venue' >&2; exit 1 ;;
+            esac
+            if (( (8#$mode & 0022) != 0 && (8#$mode & 01000) == 0 )); then echo "runner $RUNNER_NAME: group/other-writable directory without sticky bit: $dir" >&2; exit 1; fi
+            [ "$dir" != / ] || break
+            dir=${dir%/*}
+            dir=${dir:-/}
+          done
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with: { tool: cargo-nextest@0.9.143 }
+      - run: cargo nextest run --profile ci --locked
+      - run: cargo test --doc --locked
+      - name: no server may survive this job
+        if: always()
+        run: python3 -I scripts/check-server-processes.py check --state "$RUNNER_TEMP/server-processes.json"
+      - name: record remaining workspace disk
+        if: always()
+        run: df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
+  purity:
+    runs-on: ubuntu-24.04
+    # 10-14 min on main (2026-11-14), mostly check-mount-write-path's self-test,
+    # whose cases grow with the refusal catalogue; 15 cancelled loaded runners.
+    timeout-minutes: 25
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: check runner workspace permissions
+        run: |
+          set -euo pipefail
+          dir="$GITHUB_WORKSPACE"
+          while :; do
+            case "$(uname -s)" in
+              Darwin) mode=$(stat -f '%Op' "$dir") ;;
+              Linux) mode=$(stat -c '%a' "$dir") ;;
+              *) echo 'unsupported workspace permission venue' >&2; exit 1 ;;
+            esac
+            if (( (8#$mode & 0022) != 0 && (8#$mode & 01000) == 0 )); then echo "runner $RUNNER_NAME: group/other-writable directory without sticky bit: $dir" >&2; exit 1; fi
+            [ "$dir" != / ] || break
+            dir=${dir%/*}
+            dir=${dir:-/}
+          done
+      # cache-bin: false is LOAD-BEARING on a persistent self-hosted runner.
+      # The post step otherwise prunes ${CARGO_HOME}/bin and deletes rustup
+      # itself, leaving cargo/rustc/rustfmt as dangling symlinks — measured
+      # 2026-08-16, toolchain destroyed after ONE job. Harmless on hosted
+      # runners, which are discarded anyway, so set it unconditionally.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { cache-bin: "false" }
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with: { tool: cargo-deny@0.20.2 }
+      - run: ./scripts/check-core-purity.sh
+      # The DEPENDENCY axis for granary-vfs (the counterpart to
+      # check-vfs-purity.sh's SOURCE axis, in the gates job below): reuses
+      # this same deny.core.toml, scoped to granary-vfs's own manifest,
+      # plus a one-directional dependency-tree diff against granary-core
+      # and a proc-macro check. Self-test first, same shape as the two
+      # gates in the gates job.
+      - run: ./scripts/check-vfs-deps.sh --self-test
+      - run: ./scripts/check-vfs-deps.sh
+      # The server's instrumentation floor, enforced on push. It must
+      # write to stderr ONLY through the lossy sink (one direct
+      # `eprintln!`/`dbg!` from a runtime worker wedges shutdown, which
+      # is what the sink exists to prevent), and the per-request span and
+      # `served` counter must exist in PRODUCTION code rather than only
+      # in comments about it. Reads `crates/granary-server/src` alone,
+      # and runs unconditionally on PR, main and nightly CI. The script exits 2
+      # ("THE GATE IS BLIND") rather than 0 when what it greps for is absent.
+      # A local battery that runs these gates in sequence under `set -e`
+      # stops at the first red lane, so after an earlier failure this gate
+      # never executes and the server's instrumentation floor goes unchecked.
+      # --self-test FIRST, the shape check-unsafe-sites.sh uses. The gate
+      # needs a production/test scan ceiling in adapter.rs and accepts
+      # EITHER `mod tests {` or `mod tests;`. The live adapter.rs uses the
+      # out-of-line `mod tests;` form. S3 proves it fails CLOSED when NEITHER
+      # is present; S4a/S4b prove each accepted spelling still finds a ceiling.
+      - run: ./scripts/check-server-log-path.sh --self-test
+      - run: ./scripts/check-server-log-path.sh
+      # No bare standard-stream write anywhere in the closed mount inventory.
+      - run: ./scripts/check-mount-write-path.sh --self-test
+      - run: ./scripts/check-mount-write-path.sh
+      # porcelain, not `git diff --exit-code`: git diff is blind to
+      # untracked/deleted files. In a script, and not inline, because
+      # `test -z "$(git status …)"` reads a git that could not run as a
+      # clean tree.
+      #
+      - run: ./scripts/check-inventory-fresh.sh
+      # AGPL headers only in granary-server, nothing depends on
+      # granary-server, and nothing names a path into its directory. The
+      # crate has a `[lib]` target, so the dependency check is what keeps an
+      # Apache crate from linking it. All three checks live in the script,
+      # and its self-test runs it against planted repositories first.
+      - run: ./scripts/check-licence-boundary.sh --self-test
+      - run: ./scripts/check-licence-boundary.sh
+  gates:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions: { contents: read }
+    steps:
+      # `fetch-depth: 0` is LOAD-BEARING for check-citations.py. It verifies a
+      # frozen citation by reading the file AT the sha the freeze names, which
+      # needs history; `actions/checkout` defaults to depth 1, and the gate
+      # correctly REFUSED rather than certify what it could not read. Proved in
+      # a real `git clone --depth 1`: 35 citations reported unverifiable, exit
+      # 1, with this flag named in the message.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false, fetch-depth: 0 }
+      - name: check runner workspace permissions
+        run: |
+          set -euo pipefail
+          dir="$GITHUB_WORKSPACE"
+          while :; do
+            case "$(uname -s)" in
+              Darwin) mode=$(stat -f '%Op' "$dir") ;;
+              Linux) mode=$(stat -c '%a' "$dir") ;;
+              *) echo 'unsupported workspace permission venue' >&2; exit 1 ;;
+            esac
+            if (( (8#$mode & 0022) != 0 && (8#$mode & 01000) == 0 )); then echo "runner $RUNNER_NAME: group/other-writable directory without sticky bit: $dir" >&2; exit 1; fi
+            [ "$dir" != / ] || break
+            dir=${dir%/*}
+            dir=${dir:-/}
+          done
+      # cache-bin: false is LOAD-BEARING on a persistent self-hosted runner.
+      # The post step otherwise prunes ${CARGO_HOME}/bin and deletes rustup
+      # itself, leaving cargo/rustc/rustfmt as dangling symlinks — measured
+      # 2026-08-16, toolchain destroyed after ONE job. Harmless on hosted
+      # runners, which are discarded anyway, so set it unconditionally.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { cache-bin: "false" }
+      # Needs no toolchain and runs in a second, so it sits ahead of the
+      # cargo installs below and fails fast on wire drift no test in the
+      # crate can see.
+      #
+      # Check protocol constants on every PR, main push and nightly run,
+      # including document-only changes.
+      - run: python3 -I scripts/check-protocol-constants.py
+      # Require read-only hosted execution, including fork pull requests.
+      # The private guard fixtures remain part of the public self-test.
+      - run: python3 -I scripts/check-fork-guard.py --public --self-test
+      - run: python3 -I scripts/check-fork-guard.py --public
+      # ShellCheck over every tracked shell script (scripts/check-shellcheck.sh's
+      # own header has the discovery rule and the severity choice). Installed
+      # from `taiki-e/install-action`'s own supported-tools list (TOOLS.md),
+      # the same pinned action every other tool install in this job uses,
+      # pinned by VERSION the way `cargo-deny`/`cargo-shear` are below —
+      # not a second pinning mechanism. Needs no toolchain either, so it
+      # sits beside the protocol-constants gate above rather than waiting
+      # for the cargo installs further down. Self-test first, same shape
+      # as every other gate in this job.
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with: { tool: "shellcheck@0.11.0" }
+      - run: ./scripts/check-shellcheck.sh --self-test
+      - run: ./scripts/check-shellcheck.sh
+      # The gate carries a per-crate table of licensed `#[expect(unsafe_code)]`
+      # sites. The self-test runs first: a counter that has stopped
+      # counting must fail here, not report agreement it never established.
+      - run: ./scripts/check-unsafe-sites.sh --self-test
+      - run: ./scripts/check-unsafe-sites.sh
+      # crates/granary-client/clippy.toml nests a fs-call ban on top of
+      # the workspace root config (a nested config REPLACES, not merges).
+      # The self-test runs first, same reasoning as check-unsafe-sites.sh
+      # just above.
+      - run: ./scripts/check-fsguard-sites.sh --self-test
+      - run: ./scripts/check-fsguard-sites.sh
+      # The SOURCE axis: granary-vfs's `#![cfg_attr(not(test), no_std)]`
+      # is unguarded at the source level — the compiler and this gate are
+      # one mechanism. Self-test first, same shape as the two gates above.
+      - run: ./scripts/check-vfs-purity.sh --self-test
+      - run: ./scripts/check-vfs-purity.sh
+      # The ROOT-SHAPE rule: a gated crate's root is NOT frozen at any
+      # item count, but its SHAPE is — an allow-list, not
+      # check-vfs-purity.sh's subject, which is why this is a separate
+      # script. TWO crates (granary-vfs, granary-fuse); the other eight
+      # carry no index root. Self-test first, same shape as above.
+      - run: ./scripts/check-vfs-root-shape.sh --self-test
+      - run: ./scripts/check-vfs-root-shape.sh
+      # The file-size trigger: a source file under crates/*/src of more than
+      # 3,000 physical lines owes a written disposition or a compiler-proven
+      # file-scoped `#![cfg(test)]` shield. Self-test first, same shape as
+      # the gates above.
+      #
+      - run: ./scripts/check-file-dispositions.sh --self-test
+      - run: ./scripts/check-file-dispositions.sh
+      # The two syscall-trace checkers' paired controls: the FUSE sync wire
+      # witness, and authority-venue-strace.py's lifecycle mode. A run against
+      # a real trace (the fuse job's wire rows; the authority venue, off CI)
+      # cannot show that the checker still refuses a bad one, so a change that
+      # broke the controls would otherwise merge green.
+      - run: python3 -I scripts/check-fuse-sync-wire.py --self-test
+      - run: python3 -I scripts/test-authority-lifecycle-strace.py
+      # >>> THREE GATES RUN IN A NON-SHIPPING CI WORKFLOW, NOT IN THIS
+      # ONE: the scope-complement gate, the bench-results classifier and
+      # the ADR index generator. <<< Each
+      # one's SUBJECT is a path that does not ship, so the gate does not ship
+      # either, and a step in a SHIPPING workflow cannot invoke a script that
+      # is not in the artefact. They are not deleted: the non-shipping CI workflow
+      # keeps their CI seat in this repository, and the
+      # published one never sees them.
+      #
+      # Also in docs-gates.yml: document and script changes get the same
+      # venue-independent citation controls in both workflows.
+      - run: python3 -I scripts/check-citations.py --self-test
+      # >>> `--output`, AND THE VENUE IS NAMED BECAUSE IT CANNOT BE INFERRED. <<< This
+      # workflow SHIPS, so the step runs in both repositories, and the two have different
+      # corpora: `docs/adr/` is half of the live set here and is absent there. The OUTPUT
+      # venue is the reading that is TRUE IN BOTH — no citation points past the end of its
+      # target, and the corpus is not empty. It carries NO coverage floor, deliberately:
+      # measured in the built published tree, 41 of its 67 `.rs` citations are expected-
+      # diagnostic strings naming temporary fixture files and can never resolve, so a
+      # fraction over that population would be measuring fixture text. The SOURCE venue,
+      # with all six thresholds over the private corpus, runs only where that corpus exists.
+      #
+      # In THIS repository the `--output` run is strictly implied by that one and so carries
+      # no information about the corpus. It is kept here anyway because it is the only
+      # citation reading the PUBLISHED repository's own CI can perform, and a gate whose only
+      # runner is the private exporter cannot protect a public contributor's pull request.
+      - run: python3 -I scripts/check-citations.py --output
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with: { tool: "cargo-deny@0.20.2,cargo-shear@1.13.3" }
+      - run: cargo deny check
+      # The four nested fuzz workspaces have their own locks and are
+      # invisible to the bare invocation above (dependency-policy.md:25;
+      # the gap had hidden a yanked chacha20 in the client fuzz lock).
+      #
+      - run: cargo deny --manifest-path crates/granary-core/fuzz/Cargo.toml check
+      - run: cargo deny --manifest-path crates/granary-store/fuzz/Cargo.toml check
+      - run: cargo deny --manifest-path crates/granary-client/fuzz/Cargo.toml check
+      - run: cargo deny --manifest-path crates/granary-fuse/fuzz/Cargo.toml check
+      - run: cargo-shear
+      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
+  breakage:
+    # The three `conformance-breakage` gates:
+    # the feature-on workspace clippy, the
+    # feature-on workspace suite (UNFILTERED, with a count guard on the
+    # breakage-named set), and the release wall that must FAIL to compile.
+    # A separate job from `fuse`, on purpose: these are feature-gated
+    # compile/test proofs that need neither root nor a kernel mount, and a
+    # FUSE environment failure must not take them down with it. On Linux the
+    # feature-on clippy also compiles the `cfg(target_os = "linux")` arming
+    # site in the client daemon body, which the macOS copy of this gate
+    # structurally cannot reach.
+    runs-on: ubuntu-24.04
+    # The bound leaves room for load on a shared runner.
+    timeout-minutes: 30
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: record server process baseline
+        run: python3 -I scripts/check-server-processes.py begin --state "$RUNNER_TEMP/server-processes.json" --root "$GITHUB_WORKSPACE" --root "$RUNNER_TEMP"
+      - name: check runner workspace permissions
+        run: |
+          set -euo pipefail
+          dir="$GITHUB_WORKSPACE"
+          while :; do
+            case "$(uname -s)" in
+              Darwin) mode=$(stat -f '%Op' "$dir") ;;
+              Linux) mode=$(stat -c '%a' "$dir") ;;
+              *) echo 'unsupported workspace permission venue' >&2; exit 1 ;;
+            esac
+            if (( (8#$mode & 0022) != 0 && (8#$mode & 01000) == 0 )); then echo "runner $RUNNER_NAME: group/other-writable directory without sticky bit: $dir" >&2; exit 1; fi
+            [ "$dir" != / ] || break
+            dir=${dir%/*}
+            dir=${dir:-/}
+          done
+      # cache-bin: false is LOAD-BEARING on a persistent self-hosted runner.
+      # The post step otherwise prunes ${CARGO_HOME}/bin and deletes rustup
+      # itself, leaving cargo/rustc/rustfmt as dangling symlinks — measured
+      # 2026-08-16, toolchain destroyed after ONE job. Harmless on hosted
+      # runners, which are discarded anyway, so set it unconditionally.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { cache-bin: "false" }
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with: { tool: cargo-nextest@0.9.143 }
+      - run: cargo clippy --workspace --all-targets --features conformance-breakage
+      # authority_host spawns gran beside granary-server.
+      - run: cargo build --locked -p granary-cli --bin gran
+      - name: the breakage-named test set is non-empty, then the feature-on suite runs unfiltered
+        # The COUNT guard is defence in depth on the breakage-specific set
+        # only (a renamed module going silently uncounted is a real failure
+        # mode); the RUN is the whole workspace, unfiltered, because the
+        # feature changes the mount path for EVERY caller, not only for
+        # tests whose name says "breakage". `cargo nextest list` with a
+        # filter matching nothing exits 0, which is why the count is checked
+        # by hand; `grep -c` on no match exits 1, which is why it is guarded.
+        run: |
+          set -euo pipefail
+          set +e
+          listing=$(cargo nextest list --workspace --locked --features conformance-breakage -E 'test(breakage)' 2>&1)
+          list_rc=$?
+          set -e
+          if [ "$list_rc" -ne 0 ]; then
+            echo "cargo nextest list itself failed (rc=$list_rc); this is not the same outcome as the filter selecting nothing:" >&2
+            printf '%s\n' "$listing" >&2
+            exit 1
+          fi
+          selected=$(printf '%s\n' "$listing" | grep -c '^granary-' || true)
+          # Sanitised before it is compared, exactly as the local mirror does:
+          # an empty or non-numeric value makes `[ "$selected" -eq 0 ]` a test
+          # ERROR inside an `if`, which errexit exempts — so the zero branch
+          # would be skipped and the guard would fail OPEN.
+          case "$selected" in
+            ''|*[!0-9]*) selected=0 ;;
+          esac
+          if [ "$selected" -eq 0 ]; then
+            echo "-E 'test(breakage)' selected ZERO conformance-breakage tests; the count guard would pass vacuously" >&2
+            exit 1
+          fi
+          echo "breakage-named tests selected: $selected"
+          cargo nextest run --workspace --profile ci --locked --features conformance-breakage
+      - name: the release wall holds
+        # A build-mode ASSERTION: the feature-on release build must FAIL,
+        # and the release wall's own compile_error! message must be WHY.
+        # A build failing for an unrelated reason must not be accepted as
+        # "the wall held". A `case` match rather than a piped grep, so a
+        # long log cannot turn the check into a SIGPIPE.
+        run: |
+          set -euo pipefail
+          set +e
+          log=$(cargo build --release -p granary-fuse --features conformance-breakage 2>&1)
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "cargo build --release -p granary-fuse --features conformance-breakage SUCCEEDED: the release wall is gone or its cfg predicate no longer matches" >&2
+            exit 1
+          fi
+          case "$log" in
+            *'conformance-breakage must never compile into a release binary'*)
+              echo "the release wall held: the feature-on release build failed with its own message"
+              ;;
+            *)
+              echo "the release build failed, but NOT with the release wall's message; last lines:" >&2
+              printf '%s\n' "$log" | tail -20 >&2
+              exit 1
+              ;;
+          esac
+      - name: no server may survive this job
+        if: always()
+        run: python3 -I scripts/check-server-processes.py check --cleanup --state "$RUNNER_TEMP/server-processes.json"
+  publish-restart:
+    # The executable is built separately; server dev edges never arm the client.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: record server process baseline
+        run: python3 -I scripts/check-server-processes.py begin --state "$RUNNER_TEMP/server-processes.json" --root "$GITHUB_WORKSPACE" --root "$RUNNER_TEMP"
+      - name: check runner workspace permissions
+        run: |
+          set -euo pipefail
+          dir="$GITHUB_WORKSPACE"
+          while :; do
+            case "$(uname -s)" in
+              Darwin) mode=$(stat -f '%Op' "$dir") ;;
+              Linux) mode=$(stat -c '%a' "$dir") ;;
+              *) echo 'unsupported workspace permission venue' >&2; exit 1 ;;
+            esac
+            if (( (8#$mode & 0022) != 0 && (8#$mode & 01000) == 0 )); then echo "runner $RUNNER_NAME: group/other-writable directory without sticky bit: $dir" >&2; exit 1; fi
+            [ "$dir" != / ] || break
+            dir=${dir%/*}
+            dir=${dir:-/}
+          done
+      # cache-bin: false is load-bearing on a persistent self-hosted runner
+      # (the `breakage` job's comment says why).
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { cache-bin: "false" }
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with: { tool: cargo-nextest@0.9.143 }
+      # Mandatory: this complete dedicated-ext4 hosted venue still needs qualification.
+      - name: supported authority venue, persistent composition, shipping exclusion and exact coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          venue=$(mktemp -d "$RUNNER_TEMP/gran-publish-restart.XXXXXXXX")
+          image="$venue/authority.img"
+          mount="$venue/ext4"
+          cleanup() {
+            local status=$?
+            trap - EXIT
+            if mountpoint -q "$mount"; then
+              timeout 10 sudo umount -- "$mount" || status=1
+            fi
+            attached=$(sudo losetup --associated "$image" --noheadings --output NAME) || status=1
+            if mountpoint -q "$mount" || [ -n "$attached" ]; then
+              echo 'publish-restart ext4 test venue survived cleanup' >&2
+              exit 1
+            fi
+            rm -rf -- "$venue"
+            exit "$status"
+          }
+          trap cleanup EXIT
+          mkdir "$mount"
+          truncate -s 2G "$image"
+          mkfs.ext4 -q -F "$image"
+          sudo mount -t ext4 -o loop,data=ordered,barrier=1 "$image" "$mount"
+          sudo chown "$(id -u):$(id -g)" -- "$mount"
+          chmod 700 "$mount"
+          findmnt -M "$mount" -o TARGET,SOURCE,FSTYPE,OPTIONS
+          df -h "$mount"
+          TMPDIR="$mount" scripts/publish-restart.sh
+      - name: no server may survive this job
+        if: always()
+        run: python3 -I scripts/check-server-processes.py check --cleanup --state "$RUNNER_TEMP/server-processes.json"
+  overlay-faults:
+    # Armed matrix tests, normal artifact exclusion and the feature-on release wall.
+    runs-on: ubuntu-24.04
+    # 23.4 min measured maximum before the simulator's engine suite joined,
+    # whose three largest rows run serially (about 8 min, sync-large-fixtures).
+    timeout-minutes: 45
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: check runner workspace permissions
+        run: |
+          set -euo pipefail
+          dir="$GITHUB_WORKSPACE"
+          while :; do
+            case "$(uname -s)" in
+              Darwin) mode=$(stat -f '%Op' "$dir") ;;
+              Linux) mode=$(stat -c '%a' "$dir") ;;
+              *) echo 'unsupported workspace permission venue' >&2; exit 1 ;;
+            esac
+            if (( (8#$mode & 0022) != 0 && (8#$mode & 01000) == 0 )); then echo "runner $RUNNER_NAME: group/other-writable directory without sticky bit: $dir" >&2; exit 1; fi
+            [ "$dir" != / ] || break
+            dir=${dir%/*}
+            dir=${dir:-/}
+          done
+      # cache-bin: false is load-bearing on a persistent self-hosted runner
+      # (the `breakage` job's comment says why).
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { cache-bin: "false" }
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with: { tool: cargo-nextest@0.9.143 }
+      - run: ./scripts/check-overlay-faults.sh
+        env:
+          GRANARY_REQUIRE_DISCARD_CUSTODY: '1'
+          # A full slot has 4 vCPU and 16 GiB (the script defaults to one job
+          # for shared local machines). In an 8 GiB container the
+          # granary-client test build was killed above two jobs.
+          GRANARY_OVERLAY_JOBS: '2'
+  crash-points:
+    # The three `crash-points` gates, in the `breakage` job's form: the
+    # feature-on clippy of granary-server, its feature-on suite (with a
+    # count guard on the crash-named set, which includes the SIGKILL crash
+    # harness), and the release wall that must FAIL to compile.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: record server process baseline
+        run: python3 -I scripts/check-server-processes.py begin --state "$RUNNER_TEMP/server-processes.json" --root "$GITHUB_WORKSPACE" --root "$RUNNER_TEMP"
+      - name: check runner workspace permissions
+        run: |
+          set -euo pipefail
+          dir="$GITHUB_WORKSPACE"
+          while :; do
+            case "$(uname -s)" in
+              Darwin) mode=$(stat -f '%Op' "$dir") ;;
+              Linux) mode=$(stat -c '%a' "$dir") ;;
+              *) echo 'unsupported workspace permission venue' >&2; exit 1 ;;
+            esac
+            if (( (8#$mode & 0022) != 0 && (8#$mode & 01000) == 0 )); then echo "runner $RUNNER_NAME: group/other-writable directory without sticky bit: $dir" >&2; exit 1; fi
+            [ "$dir" != / ] || break
+            dir=${dir%/*}
+            dir=${dir:-/}
+          done
+      # cache-bin: false is load-bearing on a persistent self-hosted runner
+      # (the `breakage` job's comment says why).
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { cache-bin: "false" }
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with: { tool: cargo-nextest@0.9.143 }
+      - run: cargo clippy -p granary-server --all-targets --features crash-points,overlay-fault-tests
+      # authority_host spawns gran beside granary-server.
+      - run: cargo build --locked -p granary-cli --bin gran
+      - name: the crash harness and its eleven portable controls are selected, then the feature-on suite runs
+        # The count guard and its sanitising are the `breakage` job's, for
+        # the same reasons.
+        run: |
+          set -euo pipefail
+          set +e
+          listing=$(cargo nextest list -p granary-server --locked --features crash-points,overlay-fault-tests -E 'test(/crash/)' 2>&1)
+          list_rc=$?
+          set -e
+          if [ "$list_rc" -ne 0 ]; then
+            echo "cargo nextest list itself failed (rc=$list_rc):" >&2
+            printf '%s\n' "$listing" >&2
+            exit 1
+          fi
+          selected=$(printf '%s\n' "$listing" | grep -c 'the_kill_holds_at_every_point' || true)
+          case "$selected" in
+            ''|*[!0-9]*) selected=0 ;;
+          esac
+          if [ "$selected" -eq 0 ]; then
+            echo "-E 'test(/crash/)' did not select the SIGKILL crash harness; the run would pass without it" >&2
+            exit 1
+          fi
+          portable=$(printf '%s\n' "$listing" | grep -c 'convergence::server_crash::server_crash_' || true)
+          case "$portable" in
+            ''|*[!0-9]*) portable=0 ;;
+          esac
+          if [ "$portable" -ne 11 ]; then
+            echo "expected 11 portable server-crash controls, selected $portable" >&2
+            exit 1
+          fi
+          echo "crash harness and 11 portable server-crash controls selected"
+          cargo nextest run -p granary-server --profile ci --locked --features crash-points,overlay-fault-tests
+      - name: the release wall holds
+        # The feature-on release build must FAIL, and the wall's own message
+        # must be why (a `case` match, as in the `breakage` job).
+        run: |
+          set -euo pipefail
+          set +e
+          log=$(cargo build --release -p granary-server --features crash-points 2>&1)
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "cargo build --release -p granary-server --features crash-points SUCCEEDED: the release wall is gone or its cfg predicate no longer matches" >&2
+            exit 1
+          fi
+          case "$log" in
+            *'crash-points must never compile into a release binary'*)
+              echo "the release wall held: the feature-on release build failed with its own message"
+              ;;
+            *)
+              echo "the release build failed, but NOT with the release wall's message; last lines:" >&2
+              printf '%s\n' "$log" | tail -20 >&2
+              exit 1
+              ;;
+          esac
+      - name: no server may survive this job
+        if: always()
+        run: python3 -I scripts/check-server-processes.py check --cleanup --state "$RUNNER_TEMP/server-processes.json"
+  fuse:
+    # Run the mounted suites as root on a disposable Linux VM. Keep every
+    # root-owned artifact under the per-run tmpfs and every long-lived process
+    # in its transient systemd unit. The reap and final checks still prove
+    # that no process or mount survives, including after failed test steps.
+    # The mount-table helper refuses unreadable evidence and matches both
+    # the per-run prefix and Granary FUSE sources without touching outsiders.
+    runs-on: ubuntu-24.04
+    # This budget includes runner setup, the build, mounted tests and teardown.
+    timeout-minutes: ${{ (github.event_name == 'workflow_dispatch' && inputs.posix_conformance) && 75 || 55 }}
+    permissions: { contents: read }
+    env:
+      GRAN_CI_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      GRAN_CI_RUN: /run/gran-ci/${{ github.run_id }}-${{ github.run_attempt }}
+      GRAN_CI_MOUNT: /run/gran-ci/${{ github.run_id }}-${{ github.run_attempt }}/mnt
+      GRAN_CI_POSIX: /var/tmp/gran-ci-posix/${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: record hosted venue and require the FUSE device
+        run: |
+          set -euo pipefail
+          uname -a
+          systemctl --version
+          lscpu
+          free -h
+          df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
+          findmnt -T "$GITHUB_WORKSPACE" -o TARGET,SOURCE,FSTYPE,OPTIONS
+          findmnt -T /run -o TARGET,SOURCE,FSTYPE,OPTIONS
+          if [ -r /sys/fs/cgroup/memory.max ]; then cat /sys/fs/cgroup/memory.max; fi
+          if [ ! -c /dev/fuse ]; then sudo modprobe fuse; fi
+          test -c /dev/fuse
+          stat -c 'FUSE device: %F %a %U:%G' /dev/fuse
+          type -a fusermount3 || true
+      - name: record server process baseline
+        run: python3 -I scripts/check-server-processes.py begin --state "$RUNNER_TEMP/server-processes.json" --root "$GITHUB_WORKSPACE" --root "$RUNNER_TEMP"
+      - name: check runner workspace permissions
+        run: |
+          set -euo pipefail
+          dir="$GITHUB_WORKSPACE"
+          while :; do
+            case "$(uname -s)" in
+              Darwin) mode=$(stat -f '%Op' "$dir") ;;
+              Linux) mode=$(stat -c '%a' "$dir") ;;
+              *) echo 'unsupported workspace permission venue' >&2; exit 1 ;;
+            esac
+            if (( (8#$mode & 0022) != 0 && (8#$mode & 01000) == 0 )); then echo "runner $RUNNER_NAME: group/other-writable directory without sticky bit: $dir" >&2; exit 1; fi
+            [ "$dir" != / ] || break
+            dir=${dir%/*}
+            dir=${dir:-/}
+          done
+      # LOAD-BEARING, and the FIRST thing this job does after checkout (it
+      # needs the helper script; the lane's root is outside the runner's
+      # _work tree, so a leaked mount cannot break checkout): the only guard
+      # that runs regardless of how the previous job on this runner died.
+      # Units first (an orphaned daemon or suite scope is stopped, not left to
+      # keep mounting), then every mount under the lane's directory or with
+      # granary's source anywhere, each lazily unmounted with its FUSE
+      # connection aborted, then the directory. The helper refuses (exit 2)
+      # rather than reporting clean when the mount table cannot be read.
+      - name: reap any unit or mount a previous job on this runner leaked
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /run/gran-ci
+          echo "gran-ci units loaded before the reap: $(systemctl list-units --all --plain --no-legend 'gran-ci-*' | tr -s ' \n' ' ' | sed 's/ $//')"
+          # `|| true` on the stop, exactly as the teardown does: this step's
+          # WHOLE purpose is the cleanup below it, and a unit that refuses to
+          # stop must not be the reason the reap never runs. The hard gate at
+          # the end of the job is what fails on a survivor.
+          sudo systemctl stop 'gran-ci-*' || echo "a gran-ci unit refused to stop; the reap below runs anyway" >&2
+          sudo ./scripts/ci-mounts.sh reap --under /run/gran-ci --gran
+          sudo ./scripts/ci-mounts.sh reap --under /var/tmp/gran-ci-posix
+          # The DIRECTORY, not a glob of its contents: `*` skips dotfiles, and
+          # with nothing to match it stays literal and removes nothing at all,
+          # so a leaked hidden entry would survive every reap. The mounts under
+          # it are already gone by the line above.
+          sudo rm -rf /run/gran-ci /var/tmp/gran-ci-posix
+          sudo mkdir -p /run/gran-ci
+          echo "reap complete"
+      # The helper's own negatives, on the runner it runs on: every refusal
+      # fires, an impostor (source gran on tmpfs) does not match, an outsider
+      # above the prefix survives, and planted mounts under a path with a
+      # space and a backslash are reaped deepest first.
+      - name: the mount-table helper proves its own controls on this runner
+        run: sudo ./scripts/ci-mounts.sh --self-test --under "$GRAN_CI_RUN/selftest"
+      # cache-bin: false is LOAD-BEARING on a persistent self-hosted runner.
+      # The post step otherwise prunes ${CARGO_HOME}/bin and deletes rustup
+      # itself, leaving cargo/rustc/rustfmt as dangling symlinks — measured
+      # 2026-08-16, toolchain destroyed after ONE job. Harmless on hosted
+      # runners, which are discarded anyway, so set it unconditionally.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { cache-bin: "false" }
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with: { tool: cargo-nextest@0.9.143 }
+      # Match lint's cache key so the stack harness can reuse the pinned MinIO binary.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/minio/minio-*
+          key: minio-RELEASE.2025-09-07T16-13-09Z-linux-amd64
+      # A braced group, not a one-liner: `a || b && c` binds left to right,
+      # so with fusermount3 PRESENT the `||` would short-circuit the update
+      # and the trailing `&&` would then install anyway, every run.
+      - name: fuse3, idempotently
+        run: |
+          command -v fusermount3 >/dev/null 2>&1 || {
+            sudo apt-get update
+            sudo apt-get install -y fuse3
+          }
+      - name: strace, idempotently
+        run: |
+          command -v strace >/dev/null 2>&1 || {
+            sudo apt-get update
+            sudo apt-get install -y strace
+          }
+      # UNPRIVILEGED, both of them: the stack needs `gran` AND `granary-server`
+      # from target/debug, and the suite is archived here so that the root
+      # run below needs no cargo and writes nothing under the checkout.
+      - name: build the client and the server, and archive the fuse suite
+        id: fuse-build
+        run: |
+          set -euo pipefail
+          cargo build --locked -p granary-cli -p granary-client -p granary-server
+          cargo build --locked -p granary-cli --bin gran --features conformance-breakage \
+            --target-dir "$RUNNER_TEMP/stderr-armed"
+          cargo nextest archive --locked -p granary-fuse --archive-file "$RUNNER_TEMP/fuse-tests.tar.zst"
+          # The writable mount's Linux rows live in granary-client's library
+          # tests. Only that one binary is archived, and only those rows run
+          # as root: the whole client archive overflows the extract directory
+          # and would run the client suite as root.
+          cargo nextest archive --locked -p granary-client --lib --archive-file "$RUNNER_TEMP/fuse-client-tests.tar.zst"
+          # The daemon's own Linux rows live in the `gran` binary's unit
+          # tests. The fault feature admits their in-process writable authority;
+          # granary-client's release wall keeps it out of shipping artifacts.
+          cargo nextest archive --locked -p granary-cli --bin gran --features overlay-fault-tests --archive-file "$RUNNER_TEMP/fuse-daemon-tests.tar.zst"
+          # The mounted authority harness forwards client fault instrumentation
+          # only in this isolated invocation and target directory. No shipping
+          # gran artifact is built in, or read from, this feature graph.
+          cargo nextest archive --locked -p granary-server --lib \
+            --features overlay-fault-tests,crash-points --target-dir "$RUNNER_TEMP/convergence-target" \
+            --archive-file "$RUNNER_TEMP/fuse-convergence-tests.tar.zst"
+      - name: stand the stack up, mount, read the sentinel, and run the fuse suite as root
+        run: |
+          set -euo pipefail
+          job_user="$(id -un)"
+          unit="gran-ci-$GRAN_CI_ID"
+          # The run directory is its OWN tmpfs, mounted here: /run is mounted
+          # noexec on this distribution, so a test binary extracted under it
+          # cannot execute (measured: EACCES from nextest's double-spawn). A
+          # tmpfs of our own carries no such flag, bounds the run's footprint,
+          # and is one more mount under the lane's root that the reap and the
+          # hard gate already cover. 3 GiB holds each extracted archive (they are unpacked in turn) plus the workspace export: the
+          # client library's test binary alone outgrew 1 GiB in October 2026
+          # (ENOSPC unpacking it), and a full slot has 16 GiB of memory.
+          sudo mkdir -p "$GRAN_CI_RUN"
+          sudo mount -t tmpfs -o size=3g,mode=0755 tmpfs "$GRAN_CI_RUN"
+
+          # The published tree: one sentinel whose bytes carry THIS run's id,
+          # so a mount left by an earlier run cannot satisfy this run's read.
+          mkdir -p "$RUNNER_TEMP/src"
+          printf 'gran-ci sentinel %s\n' "$GRAN_CI_ID" > "$RUNNER_TEMP/src/sentinel.txt"
+
+          # The stack (MinIO, TLS with a pin, granary-server, a publish), as
+          # the job user but INSIDE a transient scope: `start` backgrounds two
+          # processes and exits, and a job cancelled before teardown would
+          # otherwise orphan them under KillMode=process. The volume name is
+          # not `gran-ci`: names with a `gran-` prefix are reserved.
+          sudo systemd-run --scope --quiet --unit="$unit-stack" --collect \
+            sudo -u "$job_user" -- ./scripts/stack.sh start \
+              --source-dir "$RUNNER_TEMP/src" --volume ci --state-dir "$RUNNER_TEMP/stack" \
+            > "$RUNNER_TEMP/stack.env"
+
+          # The env file is a frozen four-line contract; validated BEFORE it
+          # is sourced: exactly four lines, these names in this order, values
+          # in a charset with no shell meaning.
+          mapfile -t lines < "$RUNNER_TEMP/stack.env"
+          [ "${#lines[@]}" -eq 4 ] || { echo "stack.env: expected 4 lines, got ${#lines[@]}" >&2; exit 1; }
+          names=(GRAN_ENDPOINT GRAN_PIN GRAN_ROOT_KEY GRAN_VOLUME)
+          for i in 0 1 2 3; do
+            [[ "${lines[$i]}" =~ ^${names[$i]}=[][A-Za-z0-9._:/+=@%,-]+$ ]] \
+              || { echo "stack.env line $((i + 1)) violates the contract: ${lines[$i]}" >&2; exit 1; }
+          done
+          . "$RUNNER_TEMP/stack.env"
+
+          # Real blocked pipes and mounts in the host namespace. The conformance
+          # executable has its own target so it cannot replace the honest gran.
+          # The suite scope joins the existing cancellation/reap containment.
+          bash scripts/blocked-stderr.sh --self-test-witnesses
+          printf -v stderr_sentinel 'gran-ci sentinel %s\n' "$GRAN_CI_ID"
+          set +e
+          sudo systemd-run --scope --quiet --unit="$unit-stderr" --collect \
+            bash "$GITHUB_WORKSPACE/scripts/blocked-stderr.sh" run \
+              "$RUNNER_TEMP/stderr-armed/debug/gran" "$RUNNER_TEMP/stack.env" \
+              "$stderr_sentinel" "$GRAN_CI_RUN/stderr" \
+            >"$RUNNER_TEMP/blocked-stderr.log" 2>&1
+          stderr_rc=$?
+          set -e
+          cat "$RUNNER_TEMP/blocked-stderr.log"
+          [ "$stderr_rc" -eq 0 ] || { echo "stderr battery failed: rc=$stderr_rc" >&2; exit 1; }
+          bash scripts/blocked-stderr.sh --check-log "$RUNNER_TEMP/blocked-stderr.log" fixed
+
+          # The mount, as root, in a transient service. ABSOLUTE binary path:
+          # systemd resolves a relative one against WorkingDirectory, which
+          # defaults to `/`. --root-key is not a choice: a machine-wide entry
+          # point requires a publisher signature. A bounded stop timeout so a
+          # hung daemon cannot hold the teardown for systemd's 90 s default.
+          sudo mkdir -p "$GRAN_CI_MOUNT" "$GRAN_CI_RUN/cache"
+          sudo systemd-run --quiet --unit="$unit" --collect \
+            --property=Type=simple --property=TimeoutStopSec=30 \
+            "$GITHUB_WORKSPACE/target/debug/gran" mount "$GRAN_VOLUME" "$GRAN_CI_MOUNT" \
+              --endpoint "$GRAN_ENDPOINT" --pin "$GRAN_PIN" \
+              --root-key "$GRAN_ROOT_KEY" --cache-dir "$GRAN_CI_RUN/cache" \
+              --foreground
+
+          # READINESS: Type=simple returns the instant the process forks, so
+          # bound-poll the mount table for a row AT the mountpoint whose
+          # source is gran and whose fstype is fuse (this route) or fuse.gran
+          # (the unprivileged one). The unit is checked in the SAME iteration,
+          # so a daemon that died fails in one poll with its journal printed,
+          # not after the whole bound. `findmnt --mountpoint` exits 1 while
+          # the path is not yet a mountpoint, which is the polling case.
+          ready=0
+          for _ in $(seq 1 120); do
+            if ! systemctl is-active --quiet "$unit"; then
+              echo "the daemon unit $unit is not active; its journal:" >&2
+              sudo journalctl -u "$unit" --no-pager >&2 || true
+              exit 1
+            fi
+            row="$(findmnt -rn -o SOURCE,FSTYPE --mountpoint "$GRAN_CI_MOUNT" 2>/dev/null || true)"
+            if [ "$row" = "gran fuse" ] || [ "$row" = "gran fuse.gran" ]; then
+              ready=1
+              break
+            fi
+            sleep 0.5
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "no granary mount appeared at $GRAN_CI_MOUNT within 60 s; the daemon's journal:" >&2
+            sudo journalctl -u "$unit" --no-pager >&2 || true
+            exit 1
+          fi
+          echo "mount established: $(findmnt -rn -o TARGET,SOURCE,FSTYPE --mountpoint "$GRAN_CI_MOUNT")"
+
+          # THE SENTINEL READ: what turns the mount from decoration into a
+          # gate. Through sudo, because a root mount without allow_other is
+          # invisible to the job user; under a timeout, because a daemon that
+          # mounted and then hung would otherwise park this step until the job
+          # timeout; and the bytes must EQUAL the published source file, which
+          # carries this run's id.
+          set +e
+          # `-k 5`: a task blocked in a FUSE request sits in a KILLABLE wait,
+          # not an interruptible one, so plain `timeout` would signal, then
+          # wait for a child that never dies of SIGTERM and never reach its
+          # own 124. The follow-up SIGKILL is what makes the bound real.
+          sudo timeout -k 5 30 cmp "$RUNNER_TEMP/src/sentinel.txt" "$GRAN_CI_MOUNT/sentinel.txt"
+          cmp_rc=$?
+          set -e
+          # 124 AND 137. MEASURED on this runner (coreutils 9.4): `timeout -k`
+          # exits 124 when the child dies of the first signal, but 137 when the
+          # child ignores it and the follow-up SIGKILL is what ends it — which
+          # is exactly the FUSE-hang case this bound exists for. Treating 137 as
+          # anything else reports a hung mount as a byte mismatch.
+          case "$cmp_rc" in
+            0) echo "sentinel bytes verified through the mount" ;;
+            124|137)
+              echo "the sentinel read HUNG for 30 s (timeout rc=$cmp_rc); the daemon's journal:" >&2
+              sudo journalctl -u "$unit" --no-pager >&2 || true
+              exit 1
+              ;;
+            *)
+              echo "the sentinel read through the mount did not match the published bytes (cmp rc=$cmp_rc)" >&2
+              exit 1
+              ;;
+          esac
+          systemctl is-active --quiet "$unit" || { echo "the daemon unit died after the sentinel read" >&2; exit 1; }
+          # The sentinel is finished. End its mount before the suite takes
+          # its before snapshot and before the optional POSIX step can run.
+          sudo systemctl stop "$unit.service"
+          sudo ./scripts/ci-mounts.sh check --under "$GRAN_CI_MOUNT"
+
+          # THE SUITE AS ROOT. Its inputs: the archive built unprivileged
+          # above; an EXPORTED copy of the workspace (git archive of HEAD,
+          # under /run) as the workspace root, so a test that writes relative
+          # to its manifest directory writes into tmpfs and never into the
+          # checkout; TMPDIR and HOME under /run, so every scratch mount the
+          # suite makes is inside the reap domain. Inside a transient scope,
+          # so a cancelled job cannot orphan a test daemon. Row 4's cgroup
+          # provocation needs a bounded memory.max at the cgroup root, which
+          # a bare systemd host never exposes: it NoBudget-skips here, loudly,
+          # and a runner that DID expose one is refused rather than throttled.
+          # The SAME predicate the test itself applies, not a coarser copy of
+          # it: cgroup v2 writes the literal `max` in an unbounded controller,
+          # and the test's own reader parses the value and returns NoBudget
+          # when it is not a number. Refusing on mere existence would abort the
+          # job on a runner where row 4 is harmless.
+          if [ -e /sys/fs/cgroup/memory.max ]; then
+            ceiling="$(cat /sys/fs/cgroup/memory.max)"
+            case "$ceiling" in
+              ''|*[!0-9]*) echo "cgroup ceiling is \"$ceiling\": row 4 derives no budget and will skip loudly" ;;
+              *) echo "refusing: this runner's /sys/fs/cgroup/memory.max is a bounded $ceiling, and row 4 would throttle the shared cgroup" >&2; exit 1 ;;
+            esac
+          fi
+          sudo mkdir -p "$GRAN_CI_RUN/ws" "$GRAN_CI_RUN/extract" "$GRAN_CI_RUN/tmp"
+          # /tmp's own mode: two fusermount-fallback tests drop to an
+          # unprivileged uid before creating their scratch directory, and a
+          # root-only TMPDIR fails them with EACCES (measured in the container).
+          sudo chmod 1777 "$GRAN_CI_RUN/tmp"
+          git archive --format=tar HEAD | sudo tar -x -C "$GRAN_CI_RUN/ws"
+          nextest="$(command -v cargo-nextest)"
+          suite_log="$RUNNER_TEMP/fuse-suite.log"
+          before="$(mktemp)"
+          cat /proc/self/mountinfo > "$before"
+          [ -s "$before" ] || { echo "could not snapshot the mount table before the suite" >&2; exit 1; }
+          set +e
+          sudo systemd-run --scope --quiet --unit="$unit-suite" --collect \
+            env TMPDIR="$GRAN_CI_RUN/tmp" HOME="$GRAN_CI_RUN/tmp" \
+            "$nextest" nextest run --archive-file "$RUNNER_TEMP/fuse-tests.tar.zst" \
+              --extract-to "$GRAN_CI_RUN/extract" --workspace-remap "$GRAN_CI_RUN/ws" \
+              --profile ci --success-output=final > "$suite_log" 2>&1
+          suite_rc=$?
+          set -e
+          cat "$suite_log"
+          echo "suite exit status: $suite_rc"
+          # The writable mount rows, from their own small archive, extracted
+          # once the fuse suite's extraction is no longer needed.
+          sudo rm -rf "$GRAN_CI_RUN/extract"
+          sudo mkdir -p "$GRAN_CI_RUN/extract"
+          client_log="$RUNNER_TEMP/fuse-client-suite.log"
+          set +e
+          sudo systemd-run --scope --quiet --unit="$unit-client" --collect \
+            env TMPDIR="$GRAN_CI_RUN/tmp" HOME="$GRAN_CI_RUN/tmp" GRANARY_SYNC_WIRE_VENUE=1 \
+            "$nextest" nextest run --archive-file "$RUNNER_TEMP/fuse-client-tests.tar.zst" \
+              --extract-to "$GRAN_CI_RUN/extract" --workspace-remap "$GRAN_CI_RUN/ws" \
+              --profile ci --success-output=final -E 'test(writable_linux_)' > "$client_log" 2>&1
+          client_rc=$?
+          set -e
+          cat "$client_log"
+          echo "writable rows exit status: $client_rc"
+          # The daemon rows, from the third archive, extracted once the
+          # client archive's extraction is no longer needed.
+          sudo rm -rf "$GRAN_CI_RUN/extract"
+          sudo mkdir -p "$GRAN_CI_RUN/extract"
+          daemon_log="$RUNNER_TEMP/fuse-daemon-suite.log"
+          set +e
+          sudo systemd-run --scope --quiet --unit="$unit-daemon" --collect \
+            env TMPDIR="$GRAN_CI_RUN/tmp" HOME="$GRAN_CI_RUN/tmp" \
+            "$nextest" nextest run --archive-file "$RUNNER_TEMP/fuse-daemon-tests.tar.zst" \
+              --extract-to "$GRAN_CI_RUN/extract" --workspace-remap "$GRAN_CI_RUN/ws" \
+              --profile ci --success-output=final -E 'test(daemon_linux_)' > "$daemon_log" 2>&1
+          daemon_rc=$?
+          set -e
+          cat "$daemon_log"
+          echo "daemon rows exit status: $daemon_rc"
+          # The bounded rows compose the server's surviving authority with the
+          # CLI libtest daemon. Let nextest extract and list both archives with
+          # their archived runtime metadata, then measure the healthy row before
+          # any faulted row. The fixed matrix has 25 daemon executions: 4
+          # healthy; 4 stalled+4 restarts+4 controls; and 3 graduated+3
+          # restarts+3 controls. Per ending_once, reserve 20 s for harness
+          # setup/assertions/teardown, 10 s for each readiness or head wait,
+          # 18 s for each command or daemon exit, and 7 s for reader close
+          # (2 s normal join + 5 s abort join). None has one readiness and
+          # three head waits; a faulted case has two readiness and four head
+          # waits. Graduated also has a reader call bounded by 10 s plus two
+          # 5 s abort-join waits, then another 7 s close. Thus healthy is
+          # 2*103+2*85=376 s; stalled is
+          # 2*(159+103)+2*(123+85)=940 s; graduated is
+          # (186+103)+2*(150+85)=759 s. The 480/1080/900 s watchdogs leave
+          # 104/140/141 s; they do not widen B or any row-local bound. The
+          # job's own timeout-minutes still caps their sum, and a run that
+          # reaches it fails rather than passes.
+          bounded_root="$GRAN_CI_RUN/bounded"
+          sudo rm -rf "$bounded_root"
+          sudo mkdir -p "$bounded_root/cli" "$bounded_root/server"
+          bounded_cli_inventory="$RUNNER_TEMP/fuse-bounded-cli-inventory.log"
+          bounded_server_inventory="$RUNNER_TEMP/fuse-bounded-server-inventory.log"
+          set +e
+          sudo env TMPDIR="$GRAN_CI_RUN/tmp" HOME="$GRAN_CI_RUN/tmp" \
+            "$nextest" nextest list --archive-file "$RUNNER_TEMP/fuse-daemon-tests.tar.zst" \
+              --extract-to "$bounded_root/cli" --workspace-remap "$GRAN_CI_RUN/ws" \
+              --message-format oneline --run-ignored all \
+              -E 'test(=attach::tests::bounded_unmount::bounded_unmount_child)' \
+              > "$bounded_cli_inventory" 2>&1
+          bounded_cli_inventory_rc=$?
+          sudo env TMPDIR="$GRAN_CI_RUN/tmp" HOME="$GRAN_CI_RUN/tmp" \
+            "$nextest" nextest list --archive-file "$RUNNER_TEMP/fuse-convergence-tests.tar.zst" \
+              --extract-to "$bounded_root/server" --workspace-remap "$GRAN_CI_RUN/ws" \
+              --message-format oneline \
+              -E 'test(=conformance_http::intents::convergence::mounted::bounded_unmount::writable_linux_bounded_unmount_healthy)' \
+              > "$bounded_server_inventory" 2>&1
+          bounded_server_inventory_rc=$?
+          set -e
+          cat "$bounded_cli_inventory" "$bounded_server_inventory"
+          if [ "$bounded_cli_inventory_rc" -ne 0 ] || \
+             ! grep -Eq ' attach::tests::bounded_unmount::bounded_unmount_child *$' "$bounded_cli_inventory"; then
+            echo "nextest could not list the bounded CLI child (rc=$bounded_cli_inventory_rc)" >&2
+            exit 1
+          fi
+          if [ "$bounded_server_inventory_rc" -ne 0 ] || \
+             ! grep -Eq ' conformance_http::intents::convergence::mounted::bounded_unmount::writable_linux_bounded_unmount_healthy *$' "$bounded_server_inventory"; then
+            echo "nextest could not list the bounded server row (rc=$bounded_server_inventory_rc)" >&2
+            exit 1
+          fi
+          # The server row starts the CLI libtest itself. Carry both archives'
+          # libstd directories and native linked-output directories explicitly;
+          # nextest prepends its server paths and the child inherits the result.
+          bounded_library_path=''
+          while IFS= read -r library_dir; do
+            bounded_library_path="${bounded_library_path:+$bounded_library_path:}$library_dir"
+          done < <(
+            find "$bounded_root/cli/target/nextest/libdirs" \
+                 "$bounded_root/server/target/nextest/libdirs" \
+              -mindepth 1 -maxdepth 1 -type d -print
+            find "$bounded_root/cli/target/debug/build" \
+                 "$bounded_root/server/target/debug/build" \
+              -type d -name out -print
+          )
+          [ -n "$bounded_library_path" ] || {
+            echo "bounded archives contained no dynamic-library directories" >&2
+            exit 1
+          }
+          bounded_cli=''
+          bounded_cli_candidates=0
+          while IFS= read -r candidate; do
+            bounded_cli_candidates=$((bounded_cli_candidates + 1))
+            candidate_log="$RUNNER_TEMP/fuse-bounded-cli-candidate-$bounded_cli_candidates.log"
+            set +e
+            LD_LIBRARY_PATH="$bounded_library_path" \
+              "$candidate" --list > "$candidate_log" 2>&1
+            candidate_rc=$?
+            set -e
+            if [ "$candidate_rc" -ne 0 ]; then
+              echo "bounded CLI candidate failed to list: $candidate (rc=$candidate_rc)" >&2
+              cat "$candidate_log" >&2
+            elif grep -Fq 'attach::tests::bounded_unmount::bounded_unmount_child: test' "$candidate_log"; then
+              [ -z "$bounded_cli" ] || { echo "multiple bounded CLI libtests" >&2; exit 1; }
+              bounded_cli="$candidate"
+            else
+              echo "bounded CLI candidate listed but lacks the child row: $candidate" >&2
+            fi
+          done < <(find "$bounded_root/cli" -type f -perm -0100 -name 'gran-*' -print)
+          if [ "$bounded_cli_candidates" -eq 0 ]; then
+            echo "bounded CLI archive had no executable gran-* candidate; archive entries:" >&2
+            find "$bounded_root/cli" -type f -name 'gran-*' \
+              -printf 'mode=%m owner=%u group=%g path=%p\n' >&2
+          fi
+          [ -n "$bounded_cli" ] || {
+            echo "bounded CLI test executable was not usable" >&2
+            exit 1
+          }
+          minio_port="$(cat "$RUNNER_TEMP/stack/minio.port")"
+          case "$minio_port" in
+            ''|*[!0-9]*) echo "the stack's MinIO port is not numeric" >&2; exit 1 ;;
+          esac
+          bounded_env=(
+            TMPDIR="$GRAN_CI_RUN/convergence-tmp" HOME="$GRAN_CI_RUN/convergence-tmp"
+            GRAN_CI_ID="$GRAN_CI_ID"
+            LD_LIBRARY_PATH="$bounded_library_path"
+            GRANARY_BOUNDED_UNMOUNT_TEST_BINARY="$bounded_cli"
+            GRANARY_BOUNDED_UNMOUNT_GRAN="$GITHUB_WORKSPACE/target/debug/gran"
+            GRANARY_STORE_BUCKET=granary-test
+            GRANARY_STORE_ENDPOINT="http://127.0.0.1:$minio_port"
+            GRANARY_STORE_REGION=us-east-1 AWS_ACCESS_KEY_ID=granary-test
+            AWS_SECRET_ACCESS_KEY=granary-test-secret
+          )
+          sudo install -d -m 0700 "$GRAN_CI_RUN/convergence-tmp"
+          bounded_healthy_log="$RUNNER_TEMP/fuse-bounded-healthy.log"
+          set +e
+          sudo systemd-run --scope --quiet --unit="$unit-bounded-healthy" --collect \
+            env "${bounded_env[@]}" timeout --kill-after=15 480 \
+            "$nextest" nextest run --archive-file "$RUNNER_TEMP/fuse-convergence-tests.tar.zst" \
+              --extract-to "$bounded_root/server" --extract-overwrite \
+              --workspace-remap "$GRAN_CI_RUN/ws" --profile ci --success-output=final \
+              --status-level pass --final-status-level none \
+              -E 'test(=conformance_http::intents::convergence::mounted::bounded_unmount::writable_linux_bounded_unmount_healthy)' \
+              > "$bounded_healthy_log" 2>&1
+          bounded_healthy_rc=$?
+          set -e
+          cat "$bounded_healthy_log"
+          bounded_fault_log="$RUNNER_TEMP/fuse-bounded-fault.log"
+          set +e
+          sudo systemd-run --scope --quiet --unit="$unit-bounded-stalled" --collect \
+            env "${bounded_env[@]}" timeout --kill-after=15 1080 \
+            "$nextest" nextest run --archive-file "$RUNNER_TEMP/fuse-convergence-tests.tar.zst" \
+              --extract-to "$bounded_root/server" --extract-overwrite \
+              --workspace-remap "$GRAN_CI_RUN/ws" --profile ci --success-output=final \
+              --status-level pass --final-status-level none \
+              -E 'test(=conformance_http::intents::convergence::mounted::bounded_unmount::writable_linux_bounded_unmount_stalled)' \
+              > "$bounded_fault_log" 2>&1
+          bounded_stalled_rc=$?
+          sudo systemd-run --scope --quiet --unit="$unit-bounded-graduated" --collect \
+            env "${bounded_env[@]}" timeout --kill-after=15 900 \
+            "$nextest" nextest run --archive-file "$RUNNER_TEMP/fuse-convergence-tests.tar.zst" \
+              --extract-to "$bounded_root/server" --extract-overwrite \
+              --workspace-remap "$GRAN_CI_RUN/ws" --profile ci --success-output=final \
+              --status-level pass --final-status-level none \
+              -E 'test(=conformance_http::intents::convergence::mounted::bounded_unmount::writable_linux_bounded_unmount_graduated)' \
+              >> "$bounded_fault_log" 2>&1
+          bounded_graduated_rc=$?
+          set -e
+          cat "$bounded_fault_log"
+          sudo rm -rf "$bounded_root"
+          # The authority convergence rows, after the previous archive's
+          # extraction has been removed from the bounded run tmpfs. MinIO is
+          # passed by name; no ambient object-store configuration is consulted.
+          sudo rm -rf "$GRAN_CI_RUN/extract"
+          sudo mkdir -p "$GRAN_CI_RUN/extract"
+          # Its own root-only scratch: the rows keep a signing seed there, and
+          # the seed custody walk refuses the shared 1777 tmp above.
+          sudo install -d -m 0700 "$GRAN_CI_RUN/convergence-tmp"
+          convergence_log="$RUNNER_TEMP/fuse-convergence-suite.log"
+          set +e
+          sudo systemd-run --scope --quiet --unit="$unit-convergence" --collect \
+            env TMPDIR="$GRAN_CI_RUN/convergence-tmp" HOME="$GRAN_CI_RUN/convergence-tmp" GRAN_CI_ID="$GRAN_CI_ID" \
+              GRANARY_DISK_LOSS_GRAN="$GITHUB_WORKSPACE/target/debug/gran" \
+              GRANARY_STORE_BUCKET=granary-test \
+              GRANARY_STORE_ENDPOINT="http://127.0.0.1:$minio_port" \
+              GRANARY_STORE_REGION=us-east-1 AWS_ACCESS_KEY_ID=granary-test \
+              AWS_SECRET_ACCESS_KEY=granary-test-secret \
+            timeout --kill-after=15 480 "$nextest" nextest run --archive-file "$RUNNER_TEMP/fuse-convergence-tests.tar.zst" \
+              --extract-to "$GRAN_CI_RUN/extract" --workspace-remap "$GRAN_CI_RUN/ws" \
+              --profile ci --success-output=final --status-level all --final-status-level all --no-capture \
+              -E 'test(mounted_disjoint_writers_force_rebase_and_reader_convergence) | test(mounted_same_path_writers_refuse_silent_convergence) | test(mounted_same_path_loser_modify_winner_delete_refuses_silent_convergence) | test(mounted_same_path_loser_delete_winner_modify_refuses_silent_convergence) | test(mounted_same_path_conflict_full_path_event) | test(mounted_stale_base_exhaustion_stops_after_eight_attempts) | test(writable_linux_client_crash_unjournaled_write) | test(writable_linux_client_crash_journaled_write) | test(writable_linux_client_crash_uploaded) | test(writable_linux_client_crash_registered) | test(writable_linux_client_crash_landed_readback) | test(writable_linux_client_crash_landed_refresh) | test(writable_linux_client_crash_before_replace) | test(writable_linux_client_crash_rename_directory) | test(writable_linux_server_crash_registration_before_dispatch) | test(writable_linux_server_crash_registration_recorded_before_reply) | test(writable_linux_server_crash_publication_recorded_before_reply) | test(writable_linux_server_crash_publication_before_submit) | test(writable_linux_server_crash_stale_epoch_reinitialise_recovers_chain) | test(writable_linux_server_crash_intent_rows_and_zero_rows_survive_restart) | test(writable_linux_server_crash_successive_transfers_fence_delayed_high_generation) | test(writable_linux_server_crash_store_loss_refusals) | test(writable_linux_server_crash_intent_eviction_and_exhaustion) | test(writable_linux_server_crash_fenced_retains_submission) | test(writable_linux_disk_loss_durable_prepared) | test(writable_linux_disk_loss_published) | test(writable_linux_disk_loss_stale_prepared) | test(writable_linux_disk_loss_landed_before_refresh) | test(writable_linux_disk_loss_landed_overlapping_sibling) | test(writable_linux_disk_loss_concurrent_same_path) | test(writable_linux_disk_loss_key_and_store) | test(writable_linux_disk_loss_lost_ownership_replies) | test(writable_linux_disk_loss_stale_selections)' \
+              > "$convergence_log" 2>&1
+          convergence_rc=$?
+          set -e
+          cat "$convergence_log"
+          echo "convergence rows exit status: $convergence_rc"
+          after="$(mktemp)"
+          cat /proc/self/mountinfo > "$after"
+          [ -s "$after" ] || { echo "could not snapshot the mount table after the suite" >&2; exit 1; }
+
+          # THE GATES ON THE RUN, all evaluated, then aggregated — a later
+          # check's success must never become the step's status over an
+          # earlier failure.
+          failed=0
+          if [ "$bounded_healthy_rc" -ne 0 ] || [ "$bounded_stalled_rc" -ne 0 ] || [ "$bounded_graduated_rc" -ne 0 ]; then
+            echo "bounded unmount rows failed: healthy=$bounded_healthy_rc stalled=$bounded_stalled_rc graduated=$bounded_graduated_rc" >&2
+            failed=1
+          fi
+          for anchor in \
+            'conformance_http::intents::convergence::mounted::bounded_unmount::writable_linux_bounded_unmount_healthy' \
+            'conformance_http::intents::convergence::mounted::bounded_unmount::writable_linux_bounded_unmount_stalled' \
+            'conformance_http::intents::convergence::mounted::bounded_unmount::writable_linux_bounded_unmount_graduated'; do
+            bounded_log="$bounded_fault_log"
+            case "$anchor" in *healthy) bounded_log="$bounded_healthy_log" ;; esac
+            if ! grep -Eq "^ {8}PASS \\[[^]]*\\] \\( *[0-9]+/[0-9]+\\) granary-server $anchor *$" "$bounded_log"; then
+              echo "bounded unmount row $anchor did not pass" >&2
+              failed=1
+            fi
+          done
+          if grep -Eq 'NOT EXECUTED|SKIPPED-NO-DEV-FUSE' "$bounded_healthy_log" "$bounded_fault_log"; then
+            echo "a bounded unmount row did not execute on FUSE" >&2
+            failed=1
+          fi
+          # (a) every row the suite added to the mount table is a leak, whatever
+          #     its source or fstype — a lazy-detach fixture leaves a bind mount
+          #     no source filter can see. Same shape as scripts/linux-container.sh's
+          #     mount_leak_check, including the two guards that function earned:
+          #     an EMPTY before makes the diff treat after as its own baseline,
+          #     and an empty after makes it report nothing — both are failed
+          #     captures, never "no leak", and both are refused above.
+          #     THE VOLATILE TOKEN IS STRIPPED, not the whole field. `nr_inodes=`
+          #     is the only part that churns for an unchanged mount: a
+          #     tmpfs prints `,nr_inodes=N` only when its frozen max_inodes
+          #     differs from a default the kernel recomputes live from total
+          #     RAM, so on a ballooned runner the same row gains that token
+          #     mid-job. This job failed exactly that way on run 339 with a
+          #     green suite, the only "leaked" row being its own /run/gran-ci
+          #     tmpfs. Comparing by mount ID instead of the super-options
+          #     field would not be safe: mount IDs are RECYCLED after
+          #     unmount, so a replacement mount reusing one at the same
+          #     mountpoint could match a baseline row and hide a leak. Only
+          #     the churning token is removed now, so every other byte stays
+          #     exact.
+          leaked="$(awk '{ orig=$0; tmp=$NF; gsub(/(^|,)nr_inodes=[0-9]+/, "", tmp); $NF=tmp; k=$0; $0=orig } NR==FNR{seen[k]=1; next} !(k in seen)' "$before" "$after")"
+          if [ -n "$leaked" ]; then
+            echo "MOUNT-LEAK: rows added by the suite:" >&2
+            printf '%s\n' "$leaked" >&2
+            failed=1
+          fi
+          # (b) the suite ran at all: a nextest summary line exists. grep's
+          #     status is read rather than swallowed, because "no match" (1) and
+          #     "could not read the log" (2) are different outcomes and only the
+          #     first is a verdict about the suite.
+          set +e
+          summaries="$(grep -c 'tests run:' "$suite_log")"
+          grep_rc=$?
+          set -e
+          if [ "$grep_rc" -gt 1 ]; then
+            echo "could not read $suite_log (grep rc=$grep_rc): this is not evidence about the suite" >&2
+            failed=1
+          elif [ "${summaries:-0}" -lt 1 ]; then
+            echo "no nextest summary line: the suite did not run" >&2
+            failed=1
+          fi
+          # (c) the root-gated rows were COLLECTED: two anchors, one per file,
+          #     must have passed — a cfg drift that drops the module would
+          #     otherwise leave (d) vacuously true. Two details of nextest's
+          #     own rendering are load-bearing. The counter is RIGHT-ALIGNED to
+          #     the total's width, so an anchor completing early prints
+          #     `(  1/284)` and a padding-blind pattern would make the gate go
+          #     red on nothing but scheduling order. And a status line carries
+          #     EIGHT leading spaces where captured test output is re-indented
+          #     by four, so matching the exact indent keeps an ordinary line in
+          #     a test's own stdout from reading as a status line. That raises
+          #     the cost of a forgery rather than removing it — a test emitting
+          #     this text with four leading spaces of its own would still land
+          #     on eight — so the claim is "not by accident", never
+          #     "not possible".
+          for anchor in 'mechanism::row1_readdirplus_arrives_positive' 'unmount::tests::mnt_detach_lazily_unmounts_a_busy_bind_mount' 'mechanism::writable_linux_link_refusal' 'mechanism::writable_linux_special_node_refusal' 'mechanism::writable_linux_noncanonical_chmod_refusal' 'mechanism::writable_linux_chown_refusal' 'mechanism::writable_linux_utimens_refusal' 'mechanism::writable_linux_setxattr_refusal_has_no_latch' 'mechanism::writable_linux_removexattr_refusal_has_no_latch' 'mechanism::writable_linux_ro_fsync_counts_daemon_refusal_before_kernel_latch' 'mechanism::writable_linux_ro_fsyncdir_counts_daemon_refusal_before_kernel_latch' 'mechanism::writable_linux_xattr_queries_refuse_including_size_probes' 'mechanism::writable_linux_panic_unmounts_and_releases_own_connection' 'mechanism::writable_linux_pending_size_probe_times_out_and_releases_connection' 'mechanism::writable::writable_linux_create_opcode_without_fallback' 'mechanism::writable::writable_linux_regular_mknod_opcode_and_state' 'mechanism::writable::writable_linux_mkdir_opcode_and_state' 'mechanism::writable::writable_linux_unlink_opcode_and_state' 'mechanism::writable::writable_linux_rename_opcode_and_state' 'mechanism::writable::writable_linux_truncate_opcode_and_state' 'mechanism::writable::writable_linux_symlink_opcode_and_state' 'mechanism::writable::writable_linux_nonempty_rmdir_opcode_and_refusal' 'mechanism::writable::writable_linux_empty_rmdir_opcode_and_state' 'mechanism::writable::writable_linux_exec_chmod_opcode_and_state' 'mechanism::writable::writable_linux_canonical_chmod_opcode_without_capture' 'mechanism::writable::writable_linux_noreplace_roundtrip_has_two_dispatches' 'mechanism::writable::writable_linux_noreplace_existing_has_two_refusals' 'mechanism::writable::indexed::writable_linux_lookup_getattr_opcodes_without_whole_tree_query' 'mechanism::writable::indexed::writable_linux_readdir_pages_cookies_concurrent_create_unlink_opcodes' 'mechanism::writable::indexed::writable_linux_readdirplus_pages_cookies_concurrent_create_unlink_opcodes' 'mechanism::writable::endings::writable_linux_plain_umount_runs_destroy_once' 'mechanism::writable::endings::writable_linux_busy_plain_umount_is_refused_by_the_kernel' 'mechanism::writable::endings::mount_identity_follows_a_moved_mount'; do
+            set +e
+            grep -Eq "^ {8}PASS \[[^]]*\] \( *[0-9]+/[0-9]+\) granary-fuse $anchor *$" "$suite_log"
+            anchor_rc=$?
+            set -e
+            # The last of the four gates to make this distinction. Unlike (e),
+            # this one was fail-CLOSED — grep's 2 landed in the same branch as
+            # its 1, so an unreadable log still failed the job, but blamed the
+            # anchor for it. A gate that cannot read its evidence should say so.
+            if [ "$anchor_rc" -gt 1 ]; then
+              echo "could not search $suite_log for anchor $anchor (grep rc=$anchor_rc): this is not evidence about the suite" >&2
+              failed=1
+            elif [ "$anchor_rc" -ne 0 ]; then
+              echo "anchor $anchor did not PASS: the root-gated rows were not collected or not green" >&2
+              failed=1
+            fi
+          done
+          # (d) no collected root-gated row DEFERRED: `require_root` prints
+          #     NOT EXECUTED for a non-root caller and SKIPPED-NO-DEV-FUSE when
+          #     /dev/fuse is absent; on this runner both must be zero.
+          for marker in 'NOT EXECUTED' 'SKIPPED-NO-DEV-FUSE'; do
+            set +e
+            hits="$(grep -c "$marker" "$suite_log")"
+            grep_rc=$?
+            set -e
+            if [ "$grep_rc" -gt 1 ]; then
+              echo "could not count '$marker' in $suite_log (grep rc=$grep_rc): this is not evidence about the suite" >&2
+              failed=1
+            elif [ "${hits:-0}" -ne 0 ]; then
+              echo "$hits row(s) printed '$marker':" >&2
+              grep -n "$marker" "$suite_log" >&2
+              failed=1
+            fi
+          done
+          # (e) environment skips are allowed only from the rows KNOWN to skip
+          #     here, by NAME (row 4's three: no bounded cgroup on a bare host;
+          #     row 10: no LTP). A new skip, a renamed one included, is a
+          #     coverage loss and fails; a skip that disappears is coverage.
+          # The SAME distinction gates (b) and (d) make, and this gate was the
+          # one place still missing it: a `|| true` swallows grep's "could not
+          # read the file" (2) along with its "no match" (1), so an unreadable
+          # log would report no unknown skips and pass vacuously. The status is
+          # read; only 0 and 1 are verdicts about the suite.
+          set +e
+          all_skips="$(grep 'SKIPPED-ENV' "$suite_log")"
+          skips_rc=$?
+          set -e
+          if [ "$skips_rc" -gt 1 ]; then
+            echo "could not read $suite_log for SKIPPED-ENV lines (grep rc=$skips_rc): this is not evidence about the suite" >&2
+            failed=1
+          else
+            set +e
+            unknown_skips="$(printf '%s\n' "$all_skips" | grep -Ev 'SKIPPED-ENV (row4_forget_accounting_positive|row4_forget_accounting_negative_never_reclaim|row4_forget_accounting_none_control|row10_ltp_read_all_best_effort):|^$')"
+            unknown_rc=$?
+            set -e
+            if [ "$unknown_rc" -gt 1 ]; then
+              echo "could not filter the SKIPPED-ENV lines (grep rc=$unknown_rc): this is not evidence about the suite" >&2
+              failed=1
+            elif [ -n "$unknown_skips" ]; then
+              echo "environment skip(s) outside the known set:" >&2
+              printf '%s\n' "$unknown_skips" >&2
+              failed=1
+            fi
+          fi
+          echo "environment skips (known set):"
+          grep 'SKIPPED-ENV' "$suite_log" || echo "  none"
+          # (f) and the suite itself was green.
+          [ "$suite_rc" -eq 0 ] || { echo "the suite exited $suite_rc" >&2; failed=1; }
+          [ "$client_rc" -eq 0 ] || { echo "the writable rows exited $client_rc" >&2; failed=1; }
+          [ "$daemon_rc" -eq 0 ] || { echo "the daemon rows exited $daemon_rc" >&2; failed=1; }
+          [ "$convergence_rc" -eq 0 ] || { echo "the convergence rows exited $convergence_rc" >&2; failed=1; }
+          for anchor in 'conformance_http::intents::convergence::mounted::mounted_disjoint_writers_force_rebase_and_reader_convergence' 'conformance_http::intents::convergence::mounted::mounted_same_path_writers_refuse_silent_convergence' 'conformance_http::intents::convergence::mounted::mounted_same_path_loser_modify_winner_delete_refuses_silent_convergence' 'conformance_http::intents::convergence::mounted::mounted_same_path_loser_delete_winner_modify_refuses_silent_convergence' 'conformance_http::intents::convergence::mounted::mounted_same_path_conflict_full_path_event' 'conformance_http::intents::convergence::mounted::mounted_stale_base_exhaustion_stops_after_eight_attempts' 'conformance_http::intents::convergence::mounted::crash::writable_linux_client_crash_unjournaled_write' 'conformance_http::intents::convergence::mounted::crash::writable_linux_client_crash_journaled_write' 'conformance_http::intents::convergence::mounted::crash::writable_linux_client_crash_uploaded' 'conformance_http::intents::convergence::mounted::crash::writable_linux_client_crash_registered' 'conformance_http::intents::convergence::mounted::crash::writable_linux_client_crash_landed_readback' 'conformance_http::intents::convergence::mounted::crash::writable_linux_client_crash_landed_refresh' 'conformance_http::intents::convergence::mounted::crash::writable_linux_client_crash_before_replace' 'conformance_http::intents::convergence::mounted::crash::writable_linux_client_crash_rename_directory' \
+            'conformance_http::intents::convergence::mounted::server_crash::writable_linux_server_crash_registration_before_dispatch' \
+            'conformance_http::intents::convergence::mounted::server_crash::writable_linux_server_crash_registration_recorded_before_reply' \
+            'conformance_http::intents::convergence::mounted::server_crash::writable_linux_server_crash_publication_recorded_before_reply' \
+            'conformance_http::intents::convergence::mounted::server_crash::writable_linux_server_crash_publication_before_submit' \
+            'conformance_http::intents::convergence::mounted::server_crash::writable_linux_server_crash_stale_epoch_reinitialise_recovers_chain' \
+            'conformance_http::intents::convergence::mounted::server_crash::writable_linux_server_crash_intent_rows_and_zero_rows_survive_restart' \
+            'conformance_http::intents::convergence::mounted::server_crash::writable_linux_server_crash_successive_transfers_fence_delayed_high_generation' \
+            'conformance_http::intents::convergence::mounted::server_crash::writable_linux_server_crash_store_loss_refusals' \
+            'conformance_http::intents::convergence::mounted::server_crash::writable_linux_server_crash_intent_eviction_and_exhaustion' \
+            'conformance_http::intents::convergence::mounted::server_crash::writable_linux_server_crash_fenced_retains_submission' \
+            'conformance_http::intents::convergence::mounted::disk_loss::writable_linux_disk_loss_durable_prepared' \
+            'conformance_http::intents::convergence::mounted::disk_loss::writable_linux_disk_loss_published' \
+            'conformance_http::intents::convergence::mounted::disk_loss::writable_linux_disk_loss_stale_prepared' \
+            'conformance_http::intents::convergence::mounted::disk_loss::writable_linux_disk_loss_landed_before_refresh' \
+            'conformance_http::intents::convergence::mounted::disk_loss::writable_linux_disk_loss_landed_overlapping_sibling' \
+            'conformance_http::intents::convergence::mounted::disk_loss::writable_linux_disk_loss_concurrent_same_path' \
+            'conformance_http::intents::convergence::mounted::disk_loss::writable_linux_disk_loss_key_and_store' \
+            'conformance_http::intents::convergence::mounted::disk_loss::writable_linux_disk_loss_lost_ownership_replies' \
+            'conformance_http::intents::convergence::mounted::disk_loss::writable_linux_disk_loss_stale_selections' \
+          ; do
+            set +e
+            grep -Eq "^ {8}PASS \\[[^]]*\\] \\( *[0-9]+/[0-9]+\\) granary-server $anchor *$" "$convergence_log"
+            anchor_rc=$?
+            set -e
+            if [ "$anchor_rc" -gt 1 ]; then
+              echo "could not search $convergence_log for anchor $anchor (grep rc=$anchor_rc): this is not evidence about the rows" >&2
+              failed=1
+            elif [ "$anchor_rc" -ne 0 ]; then
+              echo "convergence row $anchor did not pass" >&2
+              failed=1
+            fi
+          done
+          for marker in 'NOT EXECUTED' 'SKIPPED-NO-DEV-FUSE'; do
+            set +e
+            hits="$(grep -c "$marker" "$convergence_log")"
+            marker_rc=$?
+            set -e
+            if [ "$marker_rc" -gt 1 ]; then
+              echo "could not count '$marker' in $convergence_log (grep rc=$marker_rc): this is not evidence about the rows" >&2
+              failed=1
+            elif [ "${hits:-0}" -ne 0 ]; then
+              echo "$hits convergence row(s) printed '$marker'" >&2
+              failed=1
+            fi
+          done
+          # The writable acceptance rows were COLLECTED and passed, so a filter or
+          # cfg drift cannot leave the run above vacuously green.
+          for anchor in 'mount::tests::writable::writable_linux_ready_intent_mount_is_rw_and_ordinary_write_open_succeeds' 'mount::tests::writable::writable_linux_attach_failure_is_named_and_retains_owned_intent' 'mount::tests::writable::writable_linux_refusals_modes_and_synchronous_read_pairs' 'mount::tests::writable::mounted::writable_linux_create_state_capture_and_ro_pair' 'mount::tests::writable::mounted::writable_linux_regular_mknod_state_capture_and_ro_pair' 'mount::tests::writable::mounted::writable_linux_mkdir_rmdir_state_capture_and_ro_pairs' 'mount::tests::writable::mounted::writable_linux_symlink_unlink_state_capture_and_ro_pairs' 'mount::tests::writable::mounted::writable_linux_clean_dirty_append_shared_handles_and_ro_pairs' 'mount::tests::writable::mounted::writable_linux_dense_sizes_and_open_truncate_capture_and_ro_pairs' 'mount::tests::writable::mounted::writable_linux_clean_unlink_recreate_identity_and_ro_pair' 'mount::tests::writable::mounted::writable_linux_dirty_orphan_write_truncate_and_ro_pairs' 'mount::tests::writable::mounted::writable_linux_rename_subtree_same_path_identity_and_ro_pairs' 'mount::tests::writable::mounted::writable_linux_replace_held_target_identity_and_ro_pair' 'mount::tests::writable::mounted::writable_linux_exec_modes_capture_noop_and_ro_pairs' 'mount::tests::writable::mounted::writable_linux_remaining_refusals_preserve_state_and_ro_pairs' 'mount::tests::writable::mounted::writable_linux_detached_chmod_noop_and_refusal_ro_pairs' 'mount::tests::writable::mounted::writable_linux_rename_noreplace_and_flags_state_ro_pairs' 'mount::tests::writable::mounted::writable_linux_dense_gap_and_cap_refusal_ro_pairs' 'mount::tests::writable::mounted::writable_linux_statfs_live_charge_orphan_and_ro_pair' 'mount::tests::writable::mounted::writable_linux_owner_matching_nonroot_dac_write_and_chmod' 'mount::tests::writable::mounted::writable_linux_current_append_and_dsync_refusal_ro_pair' 'mount::tests::writable::mounted::writable_linux_panic_unmounts_and_releases_connection_ro_pair' 'mount::tests::writable::mounted::sync::writable_linux_sync_table_rows' 'mount::tests::writable::mounted::sync::writable_linux_rename_directory_fault_fires' 'mount::tests::writable::mounted::sync::writable_linux_sync_covers_other_handle' 'mount::tests::writable::mounted::sync::writable_linux_write_after_capture_survives' 'mount::tests::writable::mounted::sync::writable_linux_shrink_waits_without_blocking_sync' 'mount::tests::writable::mounted::sync::writable_linux_ro_flush_release_never_register' 'mount::tests::writable::mounted::sync::writable_linux_sync_write_wire_and_receipt' 'mount::tests::writable::mounted::sync::writable_linux_sync_write_error_returns_no_count' 'mount::tests::writable::mounted::sync::writable_linux_interrupt_during_sync' 'mount::tests::writable::mounted::sync::writable_linux_sync_fault_matrix' 'mount::tests::writable::mounted::sync::writable_linux_fsync_waits_for_inflight_commit_and_commit_wait_fault' 'mount::tests::writable::mounted::sync::writable_linux_commit_captured_readback_refresh_and_replace_faults' 'mount::tests::writable::mounted::sync::writable_linux_refresh_transport_restart_replays_accepted_lost_and_never_received' 'mount::tests::writable::mounted::sync::writable_linux_commit_conflict_returns_estale_and_preserves_dirty_staging' 'mount::tests::writable::mounted::sync::fault_route::tests::writable_linux_fault_route_completed_and_stalled_controls' 'mount::tests::writable::mounted::sync::fault_route::tests::writable_linux_fault_route_panic_controls' 'mount::tests::writable::mounted::sync::writable_linux_stage_truncate_fault_fails_the_shrink_and_closes_the_overlay' 'mount::tests::writable::mounted::sync::view::writable_linux_view_production_start_commits_on_its_own' 'mount::tests::writable::mounted::sync::view::writable_linux_view_coalescer_landing_installs' 'mount::tests::writable::mounted::sync::view::writable_linux_view_unknown_outcome_keeps_view_until_landing' 'mount::tests::writable::mounted::sync::view::writable_linux_view_notifier_reaches_the_kernel' 'mount::tests::writable::mounted::sync::view::writable_linux_view_own_landing_keeps_identities_and_held_handles' 'mount::tests::writable::mounted::sync::view::writable_linux_view_rebased_landing_rekeys_head_changed_paths' 'mount::tests::writable::mounted::sync::view::writable_linux_view_local_rename_then_landing_keeps_target_identity' 'mount::tests::writable::mounted::sync::view::writable_linux_view_closed_view_revokes_held_pages' 'mount::tests::writable::mounted::sync::view::writable_linux_view_binds_before_the_session_serves' 'mount::tests::writable::mounted::sync::view::writable_linux_view_own_landing_replaced_inode_answers_estale_at_open' 'mount::tests::writable::mounted::sync::remote::writable_linux_view_shared_cache_refuses_concurrent_writable_mount' 'mount::tests::writable::mounted::sync::remote::writable_linux_view_shared_cache_restart_admits_the_landed_base' 'mount::tests::writable::mounted::sync::remote::writable_linux_view_remote_modify_is_seen_at_open' 'mount::tests::writable::mounted::sync::remote::writable_linux_view_remote_create_is_seen_at_lookup' 'mount::tests::writable::mounted::sync::remote::writable_linux_view_remote_create_is_seen_at_opendir' 'mount::tests::writable::mounted::sync::remote::writable_linux_view_remote_remove_and_rename_are_seen_through_stat' 'mount::tests::writable::mounted::sync::remote::writable_linux_view_dirty_mount_defers_until_its_own_landing' 'mount::tests::writable::mounted::sync::remote::writable_linux_view_directory_stream_across_advance' 'mount::tests::writable::mounted::sync::remote::writable_linux_view_landing_in_the_unreachable_state_clears_it' 'mount::tests::writable::mounted::sync::remote::writable_linux_view_unreachable_head_serves_declared_stale' 'mount::tests::writable::mounted::sync::remote::writable_linux_view_strict_unreachable_head_times_out' 'mount::tests::writable::mounted::sync::remote::writable_linux_view_authority_restart_fails_no_boundary' 'mount::tests::writable::mounted::sync::profile::writable_linux_projected_profile_and_sync_flags' 'mount::tests::writable::mounted::sync::profile::writable_linux_projected_replaced_descriptor_sync_makes_no_engine_call' 'mount::tests::writable::mounted::sync::published::writable_linux_projected_candidate_excludes_older_unsynced_bytes' 'mount::tests::writable::mounted::sync::published::writable_linux_projected_capture_keeps_writes_during_sync' 'mount::tests::writable::mounted::sync::published::writable_linux_projected_unlinked_open_elsewhere' 'mount::tests::writable::mounted::sync::published::writable_linux_projected_fsync_unlinked_open_file' 'mount::tests::writable::mounted::sync::published::writable_linux_projected_namespace_residual_replays' 'mount::tests::writable::mounted::sync::published::writable_linux_projected_rebase_preserves_remote_and_residual' 'mount::tests::writable::mounted::sync::published::writable_linux_projected_s2_install_keeps_local_and_held_views' 'mount::tests::writable::mounted::sync::published::writable_linux_projected_takeover_uses_caller_deadline' 'mount::tests::writable::mounted::sync::published::writable_linux_projected_kind11_takeover_ignores_stale_mark' 'mount::tests::writable::mounted::sync::published::writable_linux_projected_pending_and_install_are_not_success' 'mount::tests::writable::mounted::sync::published::writable_linux_projected_exhaustion_is_sticky_estale' 'mount::tests::writable::mounted::sync::published::writable_linux_projected_prepare_failure_reopens_admission' 'mount::tests::writable::mounted::sync::published::writable_linux_commit_drains_failed_register_contexts' 'mount::tests::writable::mounted::indexed::writable_linux_work_witness_valid_and_malformed_controls' 'mount::tests::writable::mounted::indexed::writable_linux_last_key_getattr_lookup_work_10000' 'mount::tests::writable::mounted::indexed::writable_linux_open_read_write_setattr_unlink_work_10000' 'mount::tests::writable::mounted::indexed::writable_linux_listing_pages_concurrent_create_unlink_work_10000' 'mount::tests::writable::mounted::indexed::writable_linux_open_read_write_setattr_unlink_work_17_held_objects' 'mount::tests::writable::mounted::sync::endings::writable_linux_signal_shutdown_commits_while_mounted' 'mount::tests::writable::mounted::sync::endings::writable_linux_lazy_unmount_flushes_at_the_last_close' 'mount::tests::writable::mounted::sync::endings::writable_linux_expire_while_mounted_stops_at_once'; do
+            set +e
+            grep -Eq "^ {8}PASS \[[^]]*\] \( *[0-9]+/[0-9]+\) granary-client $anchor *$" "$client_log"
+            anchor_rc=$?
+            set -e
+            if [ "$anchor_rc" -gt 1 ]; then
+              echo "could not search $client_log for anchor $anchor (grep rc=$anchor_rc): this is not evidence about the rows" >&2
+              failed=1
+            elif [ "$anchor_rc" -ne 0 ]; then
+              echo "writable row $anchor did not pass" >&2
+              failed=1
+            fi
+          done
+          # The daemon rows were COLLECTED, passed, and none deferred for want
+          # of root or /dev/fuse.
+          for anchor in 'attach::tests::daemon_linux::daemon_linux_signal_then_unmount_exits_by_the_outcome' 'attach::tests::daemon_linux::daemon_linux_fusectl_abort_with_a_held_descriptor_is_survived' 'attach::tests::daemon_linux::daemon_linux_lazy_detach_then_signal_is_clean' 'attach::tests::daemon_linux::daemon_linux_busy_root_unmount_detaches_and_exits_three' 'attach::tests::daemon_linux::daemon_linux_closing_handles_before_a_signal_never_exits_one' 'attach::tests::daemon_linux::daemon_linux_umount_waits_while_mounted' 'attach::tests::daemon_linux::daemon_linux_umount_bound_and_fence' 'attach::tests::daemon_linux::daemon_linux_umount_busy_descriptor' 'attach::tests::daemon_linux::daemon_linux_support_armed_daemon_resolves_a_relative_source_root' 'attach::tests::daemon_linux::daemon_linux_support_armed_daemon_resolves_a_symlinked_source_ancestor' 'attach::tests::daemon_linux::daemon_linux_support_armed_daemon_serves_a_bundle_without_entering_its_mount' 'attach::tests::daemon_linux::daemon_linux_support_bundle_requester_does_not_enter_an_unserved_mount' 'attach::tests::daemon_linux::daemon_linux_support_bundle_verb_publishes_live_archive' 'attach::tests::daemon_linux::daemon_linux_support_bundle_verb_refuses_output_inside_live_mount' 'attach::tests::daemon_linux::daemon_linux_support_armed_forced_mount_with_cache_beneath_mount_serves_bundle' 'attach::tests::daemon_linux::daemon_linux_support_daemon_reports_the_production_unmount_transition_as_absent' 'attach::control::endpoint::tests::daemon_linux_support_arms_from_a_prepared_endpoint_without_reopening_its_runtime_path'; do
+            set +e
+            grep -Eq "^ {8}PASS \[[^]]*\] \( *[0-9]+/[0-9]+\) granary-cli::bin/gran $anchor *$" "$daemon_log"
+            anchor_rc=$?
+            set -e
+            if [ "$anchor_rc" -gt 1 ]; then
+              echo "could not search $daemon_log for anchor $anchor (grep rc=$anchor_rc): this is not evidence about the rows" >&2
+              failed=1
+            elif [ "$anchor_rc" -ne 0 ]; then
+              echo "daemon row $anchor did not pass" >&2
+              failed=1
+            fi
+          done
+          set +e
+          deferred="$(grep -c 'NOT EXECUTED' "$daemon_log")"
+          deferred_rc=$?
+          set -e
+          if [ "$deferred_rc" -gt 1 ]; then
+            echo "could not count NOT EXECUTED in $daemon_log (grep rc=$deferred_rc): this is not evidence about the rows" >&2
+            failed=1
+          elif [ "${deferred:-0}" -ne 0 ]; then
+            echo "$deferred daemon row(s) printed NOT EXECUTED" >&2
+            failed=1
+          fi
+          [ "$failed" -eq 0 ] || exit 1
+          echo "fuse suite as root: green, $summaries summary line(s), anchors present, 0 NOT EXECUTED, 0 SKIPPED-NO-DEV-FUSE, no leaked mount"
+      - name: Pinned POSIX selection and unlink control
+        id: posix-conformance
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.posix_conformance && steps.fuse-build.outcome == 'success' }}
+        run: bash scripts/ci-posix.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.posix_conformance && steps.posix-conformance.outcome != 'skipped' }}
+        with:
+          name: fuse-posix-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fuse-posix-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: fuse-convergence-suite-log
+          path: ${{ runner.temp }}/fuse-convergence-suite.log
+          if-no-files-found: warn
+      # Teardown, in the order that works: the suite scope (test daemons),
+      # the daemon, its journal for the record, the stack (its own verified
+      # stop, then the scope that held it), every mount under this run's
+      # directory or with granary's source, then the directory. No `set -e`:
+      # every line runs, and the gates below say whether it worked.
+      - name: teardown
+        if: always()
+        run: |
+          # `set +e` EXPLICITLY: GitHub runs a `run:` body as `bash -e {0}`, so
+          # errexit is already on and `set -uo pipefail` alone would not clear
+          # it — the first unguarded command would end the teardown before the
+          # reap and the directory removal below.
+          set +e
+          set -uo pipefail
+          unit="gran-ci-$GRAN_CI_ID"
+          sudo systemctl stop "$unit-suite.scope" || true
+          sudo systemctl stop "$unit-convergence.scope" || true
+          sudo systemctl stop "$unit-daemon.scope" || true
+          sudo systemctl stop "$unit-posix-baseline.scope" "$unit-posix-unlink-control.scope" 2>/dev/null || true
+          sudo systemctl stop "$unit.service" || true
+          echo "== daemon journal"
+          sudo journalctl -u "$unit" --no-pager || true
+          echo "== stack"
+          ./scripts/stack.sh stop --state-dir "$RUNNER_TEMP/stack" || echo "stack.sh stop reported failure" >&2
+          sudo systemctl stop "$unit-stack.scope" || true
+          echo "== mounts"
+          sudo ./scripts/ci-mounts.sh reap --under "$GRAN_CI_RUN" --gran || echo "the reap reported failure; the gate below decides" >&2
+          sudo ./scripts/ci-mounts.sh reap --under "$GRAN_CI_POSIX" || echo "the POSIX backing directory reap reported failure; the gate below decides" >&2
+          sudo rm -rf "$GRAN_CI_RUN" || true
+          sudo rm -rf "$GRAN_CI_POSIX" || true
+      # THE HARD GATE: `if: always()` and it FAILS THE JOB. A teardown whose
+      # failure is invisible is not a teardown. Three properties, each with
+      # a witness line on success: no mount under the lane's directory or with
+      # granary's source anywhere (the helper exits 2 — red, never green — if
+      # the table cannot be read), no gran-ci unit still loaded, and this
+      # run's directory gone.
+      - name: no mount or unit may survive this job
+        if: always()
+        run: |
+          set -euo pipefail
+          sudo ./scripts/ci-mounts.sh check --under /run/gran-ci --gran
+          sudo ./scripts/ci-mounts.sh check --under /var/tmp/gran-ci-posix
+          units="$(systemctl list-units --all --plain --no-legend 'gran-ci-*')"
+          if [ -n "$units" ]; then
+            echo "a gran-ci unit survived teardown:" >&2
+            printf '%s\n' "$units" >&2
+            exit 1
+          fi
+          echo "no gran-ci unit remains"
+          if [ -e "$GRAN_CI_RUN" ] || [ -L "$GRAN_CI_RUN" ]; then
+            echo "this run's directory survived teardown: $GRAN_CI_RUN" >&2
+            exit 1
+          fi
+          if ! sudo bash -c '[[ ! -e "$1" && ! -L "$1" ]]' bash "$GRAN_CI_POSIX"; then
+            echo "could not verify removal of the POSIX work directory: $GRAN_CI_POSIX" >&2
+            exit 1
+          fi
+          echo "this run's directory is gone"
+      # The other thing a root step can leave behind: a root-owned entry in
+      # the checkout, which the NEXT job's `git clean` cannot delete. Nothing
+      # above writes there as root by construction; this step is the proof,
+      # and it REPAIRS as well as fails — a repair that stayed silent would
+      # be a teardown whose failure is invisible, and a failure that left the
+      # runner unusable would be worse.
+      - name: nothing root-owned may survive in the workspace
+        if: always()
+        run: |
+          set -euo pipefail
+          # NOT `-user root`: the property is "the next job's `git clean`, which
+          # runs as this unprivileged user, can delete it". Two of the suite's
+          # fusermount-fallback rows drop to a NOBODY uid before creating their
+          # scratch, so a foreign owner here need not be root at all.
+          owned="$(sudo find "$GITHUB_WORKSPACE" ! -user "$(id -u)" -print)"
+          if [ -n "$owned" ]; then
+            echo "entries in the workspace owned by someone other than $(id -un) (repaired for the next job, and a defect in this one):" >&2
+            printf '%s\n' "$owned" >&2
+            sudo find "$GITHUB_WORKSPACE" ! -user "$(id -u)" -exec chown -h "$(id -u):$(id -g)" {} +
+            exit 1
+          fi
+          echo "every entry in the workspace is owned by $(id -un)"
+      - name: no server may survive this job
+        if: always()
+        run: python3 -I scripts/check-server-processes.py check --cleanup --state "$RUNNER_TEMP/server-processes.json"
+  candidate-identity:
+    permissions: {}
+    uses: ./.github/workflows/public-ci-candidate.yml
+  ci-green:                       # Required fan-in: failures and skipped workers refuse.
+    needs: [lint, test, test-macos, candidate-identity, purity, gates, breakage, crash-points, publish-restart, overlay-faults, fuse, changes]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: check runner workspace permissions
+        run: |
+          set -euo pipefail
+          dir="$GITHUB_WORKSPACE"
+          while :; do
+            case "$(uname -s)" in
+              Darwin) mode=$(stat -f '%Op' "$dir") ;;
+              Linux) mode=$(stat -c '%a' "$dir") ;;
+              *) echo 'unsupported workspace permission venue' >&2; exit 1 ;;
+            esac
+            if (( (8#$mode & 0022) != 0 && (8#$mode & 01000) == 0 )); then echo "runner $RUNNER_NAME: group/other-writable directory without sticky bit: $dir" >&2; exit 1; fi
+            [ "$dir" != / ] || break
+            dir=${dir%/*}
+            dir=${dir:-/}
+          done
+      - name: needs list is complete
+        # a job added later but missing from needs would be invisible to the
+        # gate below — assert needs == all job ids minus ci-green
+        run: |
+          python3 -I - <<'EOF'
+          import yaml
+          wf = yaml.safe_load(open(".github/workflows/ci.yml"))
+          jobs = set(wf["jobs"]) - {"ci-green"}
+          needs = set(wf["jobs"]["ci-green"]["needs"])
+          assert needs == jobs, f"ci-green needs {sorted(needs)} != workflow jobs {sorted(jobs)}"
+          print(f"needs list complete: {sorted(needs)}")
+          EOF
+      - name: upstream results succeeded
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 -I - <<'EOF'
+          import json, os, runpy
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          expected = set(runpy.run_path("scripts/ci-changes.py")["worker_ids"]()) | {"changes"}
+          if not isinstance(needs, dict) or set(needs) != expected:
+              raise SystemExit("upstream job inventory differs")
+          if any(not isinstance(job, dict) or job.get("result") != "success" for job in needs.values()):
+              raise SystemExit("all upstream jobs must succeed")
+          EOF

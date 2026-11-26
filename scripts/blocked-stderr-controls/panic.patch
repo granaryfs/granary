@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+--- a/crates/granary-cli/src/terminal.rs
++++ b/crates/granary-cli/src/terminal.rs
+@@ -54,5 +54,5 @@
+ /// Returning leaves Rust's configured unwind/abort behavior and exit status intact.
+ pub(crate) fn install_panic_hook() {
+-    std::panic::set_hook(panic_hook(write_line));
++    std::panic::set_hook(panic_hook(|message| eprintln!("{message}")));
+ }
+ 

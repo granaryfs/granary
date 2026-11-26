@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+# HELP granary_client_metrics_schema_version Catalogue schema version.
+# TYPE granary_client_metrics_schema_version gauge
+granary_client_metrics_schema_version 2
+# HELP granary_client_metrics_incarnation Store incarnation as four unsigned 32-bit words.
+# TYPE granary_client_metrics_incarnation gauge
+granary_client_metrics_incarnation{word="0"} 66051
+granary_client_metrics_incarnation{word="1"} 67438087
+granary_client_metrics_incarnation{word="2"} 134810123
+granary_client_metrics_incarnation{word="3"} 202182159
+# HELP granary_client_metrics_available Producer wired and usable.
+# TYPE granary_client_metrics_available gauge
+granary_client_metrics_available{group="cache"} 0
+granary_client_metrics_available{group="transport"} 0
+granary_client_metrics_available{group="sync"} 0
+granary_client_metrics_available{group="commit"} 0
+granary_client_metrics_available{group="contention"} 0
+granary_client_metrics_available{group="fuse"} 0
+# HELP granary_client_metrics_overflow Sticky metric invalidity; missing series are not resets.
+# TYPE granary_client_metrics_overflow gauge
+granary_client_metrics_overflow{metric="M02"} 0
+granary_client_metrics_overflow{metric="M05"} 0
+granary_client_metrics_overflow{metric="M06"} 0
+granary_client_metrics_overflow{metric="M07"} 0
+granary_client_metrics_overflow{metric="M08"} 0
+granary_client_metrics_overflow{metric="M09"} 0
+granary_client_metrics_overflow{metric="M10"} 0
+granary_client_metrics_overflow{metric="M11"} 0
+granary_client_metrics_overflow{metric="M12"} 0
+granary_client_metrics_overflow{metric="M13"} 0
+granary_client_metrics_overflow{metric="M14"} 0
+granary_client_metrics_overflow{metric="M15"} 0
+granary_client_metrics_overflow{metric="M16"} 0
+granary_client_metrics_overflow{metric="M17"} 0
+granary_client_metrics_overflow{metric="M18"} 0
+granary_client_metrics_overflow{metric="M20"} 0
+granary_client_metrics_overflow{metric="M21"} 0

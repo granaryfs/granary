@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+# Own workspace ([workspace] below): libfuzzer-sys + cc must never enter
+# the parent lockfile/graph. Own Cargo.lock, committed. The
+# granary-core and granary-store fuzz workspaces are the precedent this
+# one follows.
+#
+# UNLIKE granary-store's fuzz crate, this one cannot trim granary-client
+# down to a codec-only feature slice: granary-client declares no Cargo
+# features at all (every dependency — object_store, hyper, tokio,
+# granary-net, granary-store, libc — is unconditional), so this fuzz
+# workspace pulls in the client's full dependency graph (aws-lc-rs,
+# hyper-rustls, etc.) to reach the cache parser and authority validator.
+#
+# WHAT ACTUALLY RUNS THIS TARGET, and what does not. Per PR, the lint
+# job runs `cargo clippy --manifest-path
+# crates/granary-client/fuzz/Cargo.toml --all-targets --locked`: it
+# type-checks and lints this workspace, never linking or running a
+# sanitizer build. It is clippy rather than `check` because this crate's
+# nested clippy config — the filesystem ban — only fires under the lint,
+# and a `cargo check` step never read it. The target's probe BODY is
+# exercised on every push by `../tests/fuzz_corpus_replay.rs`, which
+# replays the committed corpus under the stable toolchain.
+#
+# The weekly lane (`.github/workflows/fuzz.yml`) fuzzes these targets
+# under libFuzzer on nightly; `../tests/fuzz_corpus_replay.rs` asserts its
+# run line, cache workspace and artifact upload are there.
+
+[package]
+name = "granary-client-fuzz"
+version = "0.0.0"
+publish = false
+# Stated so `cargo deny check licenses` can read it: these crates ARE
+# Apache-2.0 (the SPDX header above, and LICENSES/ via REUSE), but a
+# `publish = false` package with no `license` field reports as
+# `unlicensed` and failed the gate that never looked here.
+license = "Apache-2.0"
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+
+[dependencies.granary-client]
+path = ".."
+
+# Use independent workspace for fuzzers
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "anchor_decode"
+path = "fuzz_targets/anchor_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "authority_validate"
+path = "fuzz_targets/authority_validate.rs"
+test = false
+doc = false
+bench = false

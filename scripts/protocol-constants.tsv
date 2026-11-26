@@ -1,0 +1,103 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+# Group, identifier and expected wire value, separated by tabs.
+ErrorToken	AddressMismatch	address-mismatch
+ErrorToken	AlreadyExists	already-exists
+ErrorToken	AuthorityManaged	authority-managed
+ErrorToken	BadRange	bad-range
+ErrorToken	BadRequest	bad-request
+ErrorToken	EnrollmentUnavailable	enrollment-unavailable
+ErrorToken	EpochMismatch	epoch-mismatch
+ErrorToken	ExtentTooWide	extent-too-wide
+ErrorToken	Fenced	fenced
+ErrorToken	IntentAbsent	intent-absent
+ErrorToken	IntentBound	intent-bound
+ErrorToken	IntentChanged	intent-changed
+ErrorToken	IntentCursorChanged	intent-cursor-changed
+ErrorToken	IntentEpochExhausted	intent-epoch-exhausted
+ErrorToken	IntentQuota	intent-quota
+ErrorToken	IntentSuperseded	intent-superseded
+ErrorToken	Internal	internal
+ErrorToken	InvalidCandidate	invalid-candidate
+ErrorToken	InvalidReference	invalid-reference
+ErrorToken	LayoutInvalid	layout-invalid
+ErrorToken	MethodNotAllowed	method-not-allowed
+ErrorToken	MissingReference	missing-reference
+ErrorToken	NoLog	no-log
+ErrorToken	NoPrincipal	no-principal
+ErrorToken	NotDecided	not-decided
+ErrorToken	NotEnrolled	not-enrolled
+ErrorToken	NotFound	not-found
+ErrorToken	OperationBound	operation-bound
+ErrorToken	PublishWorkLimit	publish-work-limit
+ErrorToken	RateLimited	rate-limited
+ErrorToken	StaleBase	stale-base
+ErrorToken	Stopped	stopped
+ErrorToken	TooLarge	too-large
+ErrorToken	Unavailable	unavailable
+ErrorToken	UnknownTarget	unknown-target
+ErrorToken	UnknownVolume	unknown-volume
+ErrorToken	VerifyFailed	verify-failed
+ErrorToken	VolumeDamaged	volume-damaged
+
+ContentType	AuthorityAnswer	application/vnd.granary.authority-answer.v1
+ContentType	Bin	application/vnd.granary.bin.v1
+ContentType	IntentGrant	application/vnd.granary.intent-grant.v1
+ContentType	IntentReadback	application/vnd.granary.intent-readback.v1
+ContentType	IntentReceipt	application/vnd.granary.intent-receipt.v1
+ContentType	Meta	application/vnd.granary.meta.v1
+ContentType	Root	application/vnd.granary.root.v1
+ContentType	Text	text/plain; charset=utf-8
+ContentType	VolumeStatus	application/vnd.granary.volume-status.v1
+
+Allow	Get	GET
+Allow	GetPost	GET, POST
+Allow	GetPut	GET, PUT
+Allow	Post	POST
+
+Resource	Bin	GET, PUT
+Resource	Hint	GET, PUT
+Resource	Intent	GET, POST
+Resource	IntentOwnership	POST
+Resource	IntentRelease	POST
+Resource	MaxSeq	GET
+Resource	Meta	GET, PUT
+Resource	Publish	POST
+Resource	Root	GET, PUT
+Resource	VolumeStatus	GET
+
+CacheControl	Immutable	max-age=31536000, immutable
+CacheControl	NoCache	no-cache
+CacheControl	NoStore	no-store
+
+Outcome	bin_range	max-age=31536000, immutable
+Outcome	hint	no-cache
+Outcome	hint_missing	no-cache
+Outcome	hint_not_modified	no-cache
+Outcome	intent	no-store
+Outcome	intent_refused	no-store
+Outcome	max_seq	no-store
+Outcome	max_seq_empty	no-store
+Outcome	publish_conflict	no-store
+Outcome	publish_pending	no-store
+Outcome	publish_refused	no-store
+Outcome	publish_settled	no-store
+Outcome	root	max-age=31536000, immutable
+Outcome	status_refused	no-store
+Outcome	volume_status	no-store
+
+Limit	DECLARED_MAX_EXTENT	78479383
+Limit	H2_MAX_CONCURRENT_STREAMS	100
+Limit	INGEST_UNPACKED_SUM_MAX	4294967296
+Limit	MAX_CONNECTIONS	8192
+
+RefusalCache	Bin	None
+RefusalCache	Hint	None
+RefusalCache	Intent	no-store
+RefusalCache	IntentOwnership	no-store
+RefusalCache	IntentRelease	no-store
+RefusalCache	MaxSeq	None
+RefusalCache	Meta	None
+RefusalCache	Publish	no-store
+RefusalCache	Root	None
+RefusalCache	VolumeStatus	no-store

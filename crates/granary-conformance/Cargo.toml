@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "granary-conformance"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "differential oracle for the FUSE reader (unpublished)"
+
+[dependencies]
+# The reader's boundary constants (MIN/AVG/MAX_GRAIN, DIR_LEAF_MAX_ENTRIES)
+# and the SeededRng determinism seam gendir draws from — both live here,
+# never copied as literals.
+granary-core = { path = "../granary-core" }
+# `dir` feature (readdir via `Dir`/`Entry`, whose `file_type()` answers
+# `None` on DT_UNKNOWN with no metadata() fallback, unlike
+# `std::fs::DirEntry::file_type`). `dir = ["fs"]` in nix's own manifest,
+# so this also enables `fs` — no separate `fs` line needed. `nix` is
+# already a workspace-pinned dependency (`=0.31.3`, feature `"mount"` for
+# granary-fuse); this crate adds its own direct edge with a different
+# feature list and zero new packages (`dir`/`fs` add no crates of their
+# own — verified against nix's `[features]` table).
+nix = { workspace = true, features = ["dir"] }
+
+[dev-dependencies]
+proptest.workspace = true
+
+[[bin]]
+name = "granconf"
+path = "src/bin/granconf.rs"
+
+[lints]
+workspace = true

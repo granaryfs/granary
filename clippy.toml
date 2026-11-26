@@ -1,0 +1,174 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+# Determinism seams. Entries referencing absent crates sit dormant and
+# activate when the dep lands (verified 2026-08-09 with positive control) —
+# audit the paths against the crate's current API at adoption and on major
+# bumps, since a renamed path is silently ignored again.
+# tokio::time is banned at the SEAMS, not wholesale: the time SOURCES
+# (Instant::now) and the SLEEPS (sleep, sleep_until) are listed below;
+# tokio::time::timeout is deliberately NOT banned — standards SHOULD-13
+# requires it, and a bound on how long an await may take reads no clock
+# the caller can observe. Those entries are LIVE despite the workspace
+# pinning tokio to rt + macros: object_store's reqwest chain enables
+# `time` — and `net`, `fs`, `io-util` and `sync` along with it — and
+# unification hands the lot to every tokio user in the graph. Reading
+# the pin alone would say they are dormant; they are not, and naming
+# only `time` understated which surfaces the bans already cover.
+
+disallowed-methods = [
+  { path = "std::time::Instant::now", reason = "use the Clock seam" },
+  { path = "std::time::SystemTime::now", reason = "use the Clock seam" },
+  { path = "std::thread::sleep", reason = "wall time in disguise; use the Clock seam" },
+  { path = "std::process::id", reason = "ambient input; the preimage of a hashed or signed value takes a WriterIdentity" },
+  { path = "tokio::time::Instant::now", reason = "use the Clock seam" },
+  { path = "tokio::time::sleep", reason = "use the Clock seam" },
+  { path = "tokio::time::sleep_until", reason = "use the Clock seam" },
+  # The sim owns its scheduler: a spawned task is ordered by a
+  # runtime the sim cannot sequence, so a scenario's interleaving would
+  # stop being a property of the seed. Matched by DefId, so
+  # `tokio::task::spawn` is the same ban under another path.
+  { path = "tokio::spawn", reason = "runtime-ordered concurrency the sim cannot sequence; drive futures through the sim's scheduler" },
+  # `tokio::spawn` alone is NOT the ban. It matches by DefId, so the free
+  # function and its aliases are caught — and every METHOD form escapes.
+  # Measured 2026-08-15 on 1.97.1: of ten spawn routes, four fired and six
+  # compiled clean. These five close them; `tokio::task::spawn` needs no
+  # entry because it IS `tokio::spawn`'s DefId.
+  { path = "tokio::task::JoinSet::spawn", reason = "runtime-ordered concurrency the sim cannot sequence" },
+  { path = "tokio::task::JoinSet::spawn_on", reason = "runtime-ordered concurrency the sim cannot sequence" },
+  { path = "tokio::runtime::Handle::spawn", reason = "runtime-ordered concurrency the sim cannot sequence" },
+  { path = "tokio::task::spawn_blocking", reason = "a blocking-pool task the sim cannot sequence either" },
+  { path = "tokio::task::LocalSet::spawn_local", reason = "runtime-ordered concurrency the sim cannot sequence" },
+  # allow-invalid: the reason differs crate by crate, measured with
+  # check-fsguard-sites.sh's
+  # resolution check (stripping the flag and rerunning the crate's own
+  # clippy): `rand::rng` resolves EVERYWHERE checked (granary-client,
+  # granary-store, granary-conformance, granary-net, granary-bench); the
+  # other five resolve for granary-client/granary-store (object_store
+  # pulls rand 0.10.2 transitively) but NOT for granary-conformance/-net/
+  # -bench (whose only `rand` is 0.9.5 via proptest, without the
+  # `thread_rng` feature proptest does not enable). The flag is one
+  # boolean shared by every crate this config governs, so it stays
+  # `true` on all six here: removing it would silence nothing
+  # security-relevant (a row that resolves is already banned, flag or
+  # not — verified) and would only add warning noise in the crates that
+  # still cannot resolve it. Audit again, crate by crate, whenever
+  # `rand`'s version or feature set in Cargo.lock changes.
+  { path = "rand::rng", reason = "ambient entropy; use the Rng seam", allow-invalid = true },
+  { path = "rand::random", reason = "ambient entropy; use the Rng seam", allow-invalid = true },
+  { path = "rand::random_range", reason = "ambient entropy; use the Rng seam", allow-invalid = true },
+  { path = "rand::random_bool", reason = "ambient entropy; use the Rng seam", allow-invalid = true },
+  { path = "rand::random_iter", reason = "ambient entropy; use the Rng seam", allow-invalid = true },
+  { path = "rand::random_ratio", reason = "ambient entropy; use the Rng seam", allow-invalid = true },
+  # Raw random bytes from the operating system's generator are drawn in
+  # ONE sanctioned place, granary_net::secure_random::OsSecureRandom.
+  # aws-lc's free `fill`, and the TLS provider's `secure_random` (a
+  # `&dyn rustls::crypto::SecureRandom`, so its calls resolve to the trait
+  # method), are the two routes to raw bytes that do not name the banned
+  # type below. NOT governed here: aws-lc's own key-generation APIs
+  # (`Ed25519KeyPair::generate`, ECDSA and agreement key pairs,
+  # `RandomizedNonceKey`) draw from the same OS-seeded generator inside
+  # aws-lc without naming any banned item; they yield keys, never raw
+  # bytes a caller keeps as an identity or an epoch.
+  { path = "aws_lc_rs::rand::fill", reason = "raw random bytes come only from the SecureRandom seam (granary_net::secure_random::OsSecureRandom)" },
+  { path = "rustls::crypto::SecureRandom::fill", reason = "raw random bytes come only from the SecureRandom seam (granary_net::secure_random::OsSecureRandom)" },
+]
+
+# The concurrency bans: out of bounds in granary-sim and in
+# any code the sim drives. `tokio::spawn` is the fourth of them and is a
+# method, so it sits above. `select!` randomises branch order from a
+# runtime RNG the sim cannot seed (`Builder::rng_seed` is
+# `cfg(tokio_unstable)`), and `join!`/`try_join!` on a current-thread
+# runtime poll the first-listed future to completion, so two publishers
+# never contend and a race scenario passes without a race in it.
+#
+# WHERE THIS IS LIVE, AND WHERE IT IS NOT. Live wherever tokio is in the
+# crate's graph — granary-client (lib + `gran`), granary-store's test
+# targets, and granary-net, which takes tokio directly for the accept
+# loop; verified with a positive control in granary-client, which is
+# the code the sim drives. granary-net is the one place the bans are
+# expected to fire on purpose: it is the layer the sim REPLACES rather
+# than drives, so its two spawn sites carry per-site `#[expect]`s with
+# reasons instead of being written around. These entries are also live
+# in granary-sim: its engine scheduling adapter names Tokio join channels
+# and deadline types, while its own seeded poll loop orders every task.
+# No Tokio spawning or polling combinator is used by that adapter.
+disallowed-macros = [
+  { path = "tokio::select", reason = "unseeded branch order; sequence the interleaving in the sim's scheduler" },
+  { path = "tokio::join", reason = "degenerate on a current-thread runtime — the first future runs to completion, so nothing contends" },
+  { path = "tokio::try_join", reason = "same polling order as join!, so the ban would have a one-word bypass without it" },
+]
+
+# Enforced only where the lint is enabled: the crate roots of granary-core,
+# -net, -store, -client, -server, -sim and the granary-server and gran
+# binaries deny it
+# (HashMap iteration order leaks nondeterminism into sim; raw bytes from
+# the OS generator are drawn in one sanctioned place).
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "BTreeMap or seeded hasher in core" },
+  { path = "std::collections::HashSet", reason = "BTreeSet or seeded hasher in core" },
+  { path = "std::hash::RandomState", reason = "ambient per-process entropy" },
+  # The INVERSE pattern from its six method-row neighbours above:
+  # measured, `rand::rngs::OsRng` resolves for granary-conformance/-net/
+  # -bench (rand 0.9.5's `os_rng` feature, which proptest's own `std`
+  # feature turns on) but NOT for granary-client/granary-store (rand
+  # 0.10.2, the version actually in THEIR graph, dropped that path
+  # entirely — checked against its source: no `rngs/os.rs`, no
+  # re-export). Same shared-boolean reasoning as above: stays flagged.
+  { path = "rand::rngs::OsRng", reason = "ambient entropy; use the Rng seam", allow-invalid = true },
+  # Banning the TYPE covers `new`, `default` and every other construction.
+  # Enforced in each crate root that denies the lint (the core, net,
+  # store, client, server and sim libraries, and the granary-server and
+  # gran binaries); the one licensed site is OsSecureRandom's `#[expect]`.
+  { path = "aws_lc_rs::rand::SystemRandom", reason = "raw random bytes come only from the SecureRandom seam (granary_net::secure_random::OsSecureRandom)" },
+]
+
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true
+
+# DEFENCE-IN-DEPTH for the GLOB route into a
+# curated crate root (`pub use child::*;`) — the CLOSING mechanism is
+# scripts/check-vfs-root-shape.sh's own named-leaf allow-list check,
+# which DOES refuse this structurally (verified: a `pub use extra::*;`
+# root re-export is refused by that script with or without this key).
+# Broadens `clippy::wildcard_imports` (already "warn" via the `pedantic`
+# group), but NOT along an "external vs same-crate" axis — CORRECTED,
+# EXECUTED against clippy 0.1.97: a same-crate glob (`use child::*;`,
+# something in the crate actually naming one of the items it brings in)
+# fires identically with or without this key, and a PURE RE-EXPORT glob
+# with nothing consumed locally (`pub use extra::*;`, the shape that
+# actually matters here) fires with NEITHER — clippy's lint fires on
+# `names_imported_by_glob_use`, names the glob import is later USED to
+# resolve, which is empty for a re-export nothing in the crate itself
+# calls through. What this key actually removes is a set of NAMED
+# EXEMPTIONS clippy carries by default — EXECUTED: a module whose glob
+# import path ends in `prelude` (`use crate::prelude::*;`) is exempt
+# without this key and warned WITH it. The `use super::*;` exemption
+# inside a `#[cfg(test)]` module is UNAFFECTED by this key either way
+# (see the canary below) — it is a separate, unconditional exemption.
+#
+# PREEMPTIVE, not a fix for a live root violation: no crate ROOT in
+# this workspace carries a glob (every `src/lib.rs` and `src/main.rs`
+# checked) — the honest framing is that this closes the route at every
+# root before anyone uses it. The two places it DOES fire today are
+# both CHILD-module re-exports in `granary-core/src/manifest/mod.rs`:
+# `pub use node::*;` (line 14) and `pub use tree::*;` (line 17),
+# un-globbed to named lists (21 names from `node.rs`, 11 from
+# `tree.rs` — VERIFIED, `grep -c '^pub ' crates/granary-core/src/
+# manifest/node.rs` gives **21**, matching the named list exactly;
+# `^pub ` cannot match `pub(crate) fn check_strictly_sorted` at all —
+# the character after `pub` there is `(`, not a space — so there is no
+# 22-to-21 subtraction to state, only the one verified count) in the
+# same change that added this key. `pub mod node;`/`pub mod tree;`
+# stay, so nothing becomes unreachable. `cargo check --workspace` and
+# `cargo nextest run -p granary-core` (356 passed, 1 skipped) both
+# green after.
+#
+# CANARY, on this repo's pinned rustc/clippy 1.97.1: `use super::*;`
+# inside a `#[cfg(test)]` test module does NOT trigger this lint. CI's
+# lint job runs `cargo clippy --workspace --all-targets` with warnings
+# denied over every test module that uses the idiom, so a hit from any
+# of them fails that job.
+# Worth re-checking on any clippy bump: a change here could light up
+# every test module in the workspace that uses the idiom at once.
+warn-on-all-wildcard-imports = true

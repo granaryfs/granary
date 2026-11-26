@@ -1,0 +1,327 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+#
+# THIS FILE REPLACES THE WORKSPACE ROOT `clippy.toml` IN ITS ENTIRETY FOR
+# THIS CRATE — clippy does not merge a nested config with the root one, it
+# picks the nearest ancestor and uses only that file (probe-verified in
+# this workspace: a temp nested config carrying only the new rows fired
+# zero determinism-seam bans until the root content was copied in). That is
+# why every one of the root file's seven top-level keys is carried below
+# VERBATIM (including its comments) — `disallowed-methods`,
+# `disallowed-macros`, `disallowed-types`, the three `allow-*-in-tests`
+# scalars, and `warn-on-all-wildcard-imports` — and not just the rows
+# this crate adds.
+# Dropping any one of those keys here would silently change granary-client's
+# whole lint regime (e.g. losing `allow-unwrap-in-tests` would deny every
+# test `unwrap()` under CI's deny-warnings) with no signal at the point of
+# the drop. `scripts/check-fsguard-sites.sh` is the gate that catches that:
+# it asserts, key by key, that this file is a superset of the root file
+# (list keys ⊇, scalar keys ==), not just that the filesystem rows below
+# are present.
+#
+# THE FILESYSTEM ROWS BELOW ARE ENUMERATIVE, NOT CLOSED BY CONSTRUCTION.
+# They name the std/os entry points that touch the filesystem without
+# going through `fsguard`, as of `rust-toolchain.toml`'s pinned 1.97.1.
+# A future stable release can add new entry points to the same surface
+# (a new `std::fs` free function, a new `Path` method) that this list has
+# no way to know about — clippy resolves by DefId, so it can only refuse
+# what is named. AUDITING THIS LIST IS PART OF EVERY TOOLCHAIN BUMP: when
+# `rust-toolchain.toml`'s pin moves, check std's `fs` and `path` module
+# docs (and `std::os::unix::fs`) for additions before merging the bump,
+# the same discipline that file's own header states for the pin itself.
+#
+# `symlink_metadata` and `Path::is_symlink` are DELIBERATELY not banned —
+# they are lstat-backed, the SAFE half of this class, and the form fixes
+# rewrite toward when a `metadata`/`exists`/`is_file` site is licensed
+# away. `chown` is banned (follows symlinks); `lchown`/`fchown` are the
+# safe forms and stay allowed. `OpenOptions::open` and
+# `DirBuilder::create` are banned alongside their `::new` constructors:
+# banning only the constructor licenses nothing about the SINK — a
+# builder value assembled in a licensed scope could still `.open(path)`
+# or `.create(path)` anywhere it is later called, so the sink (where the
+# path actually meets the filesystem) is banned too.
+#
+# TEST MODULES ARE EXEMPT WHOLESALE, AND THE RULE IS STATED HERE ONLY.
+# `allow-unwrap-in-tests` and its two siblings above have no
+# `disallowed_methods` counterpart — clippy offers no allow-in-tests knob
+# for this lint — so every `mod tests` THAT MAKES A BANNED CALL (and
+# every integration-test file in `tests/` that does) carries ONE
+# `#[expect(clippy::disallowed_methods, ...)]` on the module item, with
+# the same short reason at every site:
+#
+#   "test module: fixtures use bare fs calls on their own scratch
+#    directories; disallowed_methods has no allow-in-tests knob"
+#
+# "that makes a banned call" is the whole rule, not a softening of it.
+# `#[expect]` is FULFILLED-OR-ERROR, so a licence on a module whose
+# fixtures touch no filesystem is an `unfulfilled_lint_expectations`
+# warning — and warnings are denied here. A test module with no banned
+# call therefore carries NO licence (`direct_deadline.rs`'s and
+# `route.rs`'s do not), and that absence is the rule holding rather than
+# an omission.
+#
+# WHAT THAT LICENCE COVERS IS THE FILESYSTEM ROWS, AND ONLY THOSE.
+# `disallowed_methods` is one lint over rows of two different kinds: the
+# fs rows below, and the ambient-input and concurrency rows
+# that share it. A wholesale `#[expect]` silences the lint, so it would
+# otherwise license both. It does not: under a whole-module or
+# whole-file licence in `tests/` or `fuzz/`, the fs rows are covered —
+# bare filesystem calls on paths the test fixture itself owns and tears
+# down (scratch directories, the objects, roots, links, FIFOs and
+# corrupt files it plants there) and read-only reads of committed
+# workspace files a test uses as an oracle — and EVERY OTHER ROW NEEDS
+# ITS OWN NARROW `#[expect]` at the call site, stating what that call is
+# for and why it is not the seam its row guards. `scripts/fsguard-scan.py`
+# refuses THREE of the four ways such a call can be written under a
+# wholesale licence with no narrow licence of its own: the call spelled
+# as a path (`tokio::spawn(...)`, a turbofish included), an import of
+# the path, and an import that renames or globs the path's parent module
+# — which is why the `std::process::id` that names a scratch directory
+# carries a narrow licence at every such fixture rather than riding on
+# the module's. It does NOT refuse a RECEIVER spelling
+# (`set.spawn(...)`), because deciding a receiver's type is name
+# resolution and this is a text scanner; that route is open, it is
+# recorded as open in the scanner's own header, and it is the reason a
+# narrow per-site licence is the right shape rather than a wholesale
+# one.
+#
+# It does NOT cover production code, and it is deliberately identical at
+# every site: a per-site prose reason on a wholesale exemption describes
+# whichever fixture existed when it was written and silently stops being
+# true as the module grows. The two `tokio::spawn` licences (retry.rs,
+# tests/http_store.rs) are a DIFFERENT rule and keep
+# their own reasons.
+#
+# No static check here proves a path came from `fsguard` — that would be
+# taint analysis, out of reach for a lint list. The licensed `#[expect]`
+# reasons at each call site, plus review, are the compensating control.
+#
+# A TYPO'D PATH BELOW IS NOT SILENT — BUT CLIPPY'S OWN DIAGNOSTIC IS NOT
+# WHAT FAILS THE BUILD. Clippy DOES report `<path> does not refer to a
+# reachable function` for any entry it cannot resolve, but that
+# diagnostic is emitted by clippy's CONFIG LOADER, not as a registered
+# lint (`code.code` is `null` in `--message-format=json`), so denied
+# warnings do NOT promote it — measured on the pinned 1.97.1 against a
+# deliberately broken row: `CARGO_BUILD_WARNINGS=deny` and
+# `cargo clippy -- -D warnings` both still exit 0. What actually makes a
+# misspelled or renamed entry point fail the build is THREE separate,
+# independently-verified mechanisms: (a) `check-fsguard-sites.sh`'s
+# fs-row anchoring check catches a STRING edit (the row itself changing
+# shape); (b) a real call site's narrow `#[expect(clippy::disallowed_methods,
+# ...)]` goes `unfulfilled_lint_expectations` (a REAL, denied lint) the
+# moment its row stops resolving, which is fulfilled-or-error and so
+# catches an UPSTREAM rename with no local edit at all; and (c)
+# `check-fsguard-sites.sh`'s resolution check, which runs the crate's
+# own `cargo clippy` and asserts, both directions, that the set of rows
+# clippy reports unresolvable equals the set marked `allow-invalid =
+# true` below — a row that goes dormant without that flag is refused,
+# and a flagged row that starts resolving is refused too, as a
+# re-arm falling due.
+# `allow-invalid = true` is therefore the ONE shape that can go quiet
+# under (a) and (b) alone (it suppresses the config-loader's own
+# warning on purpose), which is exactly what (c) exists to close.
+
+disallowed-methods = [
+  { path = "std::time::Instant::now", reason = "use the Clock seam" },
+  { path = "std::time::SystemTime::now", reason = "use the Clock seam" },
+  { path = "std::thread::sleep", reason = "wall time in disguise; use the Clock seam" },
+  { path = "std::process::id", reason = "ambient input; the preimage of a hashed or signed value takes a WriterIdentity" },
+  { path = "tokio::time::Instant::now", reason = "use the Clock seam" },
+  { path = "tokio::time::sleep", reason = "use the Clock seam" },
+  { path = "tokio::time::sleep_until", reason = "use the Clock seam" },
+  # The sim owns its scheduler: a spawned task is ordered by a
+  # runtime the sim cannot sequence, so a scenario's interleaving would
+  # stop being a property of the seed. Matched by DefId, so
+  # `tokio::task::spawn` is the same ban under another path.
+  { path = "tokio::spawn", reason = "runtime-ordered concurrency the sim cannot sequence; drive futures through the sim's scheduler" },
+  # `tokio::spawn` alone is NOT the ban. It matches by DefId, so the free
+  # function and its aliases are caught — and every METHOD form escapes.
+  # Measured 2026-08-15 on 1.97.1: of ten spawn routes, four fired and six
+  # compiled clean. These five close them; `tokio::task::spawn` needs no
+  # entry because it IS `tokio::spawn`'s DefId.
+  { path = "tokio::task::JoinSet::spawn", reason = "runtime-ordered concurrency the sim cannot sequence" },
+  { path = "tokio::task::JoinSet::spawn_on", reason = "runtime-ordered concurrency the sim cannot sequence" },
+  { path = "tokio::runtime::Handle::spawn", reason = "runtime-ordered concurrency the sim cannot sequence" },
+  { path = "tokio::task::spawn_blocking", reason = "a blocking-pool task the sim cannot sequence either" },
+  { path = "tokio::task::LocalSet::spawn_local", reason = "runtime-ordered concurrency the sim cannot sequence" },
+  # allow-invalid: NOT simply "proptest's rand 0.9 (alloc-only)", which
+  # is only part of the reason — measured with the resolution check
+  # below (stripping the flag and rerunning the crate's own clippy):
+  # `rand::rng` resolves EVERYWHERE checked (granary-client, granary-store,
+  # granary-conformance, granary-net, granary-bench); the other five
+  # resolve for granary-client/granary-store (object_store pulls rand
+  # 0.10.2 transitively) but NOT for granary-conformance/-net/-bench
+  # (whose only `rand` is 0.9.5 via proptest, without the `thread_rng`
+  # feature proptest does not enable). The flag is one boolean shared by
+  # every crate this config governs, so it stays `true` on all six here:
+  # removing it would silence nothing security-relevant (a row that
+  # resolves is already banned, flag or not — verified) and would only
+  # add warning noise in the crates that still cannot resolve
+  # it. Audit again, crate by crate, whenever `rand`'s
+  # version or feature set in Cargo.lock next changes.
+  { path = "rand::rng", reason = "ambient entropy; use the Rng seam", allow-invalid = true },
+  { path = "rand::random", reason = "ambient entropy; use the Rng seam", allow-invalid = true },
+  { path = "rand::random_range", reason = "ambient entropy; use the Rng seam", allow-invalid = true },
+  { path = "rand::random_bool", reason = "ambient entropy; use the Rng seam", allow-invalid = true },
+  { path = "rand::random_iter", reason = "ambient entropy; use the Rng seam", allow-invalid = true },
+  { path = "rand::random_ratio", reason = "ambient entropy; use the Rng seam", allow-invalid = true },
+  # Raw random bytes from the operating system's generator are drawn in
+  # ONE sanctioned place, granary_net::secure_random::OsSecureRandom.
+  # aws-lc's free `fill`, and the TLS provider's `secure_random` (a
+  # `&dyn rustls::crypto::SecureRandom`, so its calls resolve to the trait
+  # method), are the two routes to raw bytes that do not name the banned
+  # type below. NOT governed here: aws-lc's own key-generation APIs
+  # (`Ed25519KeyPair::generate`, ECDSA and agreement key pairs,
+  # `RandomizedNonceKey`) draw from the same OS-seeded generator inside
+  # aws-lc without naming any banned item; they yield keys, never raw
+  # bytes a caller keeps as an identity or an epoch.
+  { path = "aws_lc_rs::rand::fill", reason = "raw random bytes come only from the SecureRandom seam (granary_net::secure_random::OsSecureRandom)" },
+  { path = "rustls::crypto::SecureRandom::fill", reason = "raw random bytes come only from the SecureRandom seam (granary_net::secure_random::OsSecureRandom)" },
+  # ---- filesystem rows (this crate only) — see header above ----
+  { path = "std::fs::create_dir_all", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::create_dir", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::exists", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::metadata", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::remove_file", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::remove_dir", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::remove_dir_all", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::rename", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::set_permissions", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::write", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::read", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::read_to_string", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::read_dir", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::canonicalize", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::hard_link", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::read_link", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::copy", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::File::open", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::File::create", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::File::create_new", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::File::options", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::OpenOptions::new", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::OpenOptions::open", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::DirBuilder::new", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::DirBuilder::create", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::fs::soft_link", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::path::Path::exists", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::path::Path::try_exists", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::path::Path::is_file", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::path::Path::is_dir", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::path::Path::metadata", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::path::Path::canonicalize", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::path::Path::read_dir", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::path::Path::read_link", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::os::unix::fs::symlink", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "std::os::unix::fs::chown", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  # `std::env::set_current_dir` is a filesystem row too, and the most
+  # consequential one: it changes the meaning of every RELATIVE path in
+  # the process at once, including the ones the nesting guards resolved
+  # against the cwd before it moved. It is process-global, so a single
+  # call invalidates checks made anywhere else, and no per-site guard can
+  # see it coming.
+  { path = "std::env::set_current_dir", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  # ---- the ASYNC half of the same class ----
+  # tokio's `fs` feature is LIVE in this crate — it arrives by feature
+  # unification (reqwest's `stream`, through object_store's aws chain),
+  # verified with `cargo tree -e features -i tokio`. Every entry point
+  # below is therefore callable here today and does exactly what its
+  # std twin does, on a blocking-pool thread: `tokio::fs::write` follows
+  # a symlink, `tokio::fs::create_dir_all` follows one whose target is a
+  # directory, `tokio::fs::metadata` is a followed stat. Banning only
+  # the `std::` spellings would leave the whole class one `use` away.
+  # `tokio::fs::symlink_metadata` is the SAFE half here as well and is
+  # deliberately not banned.
+  { path = "tokio::fs::read", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::read_to_string", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::write", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::create_dir", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::create_dir_all", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::remove_file", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::remove_dir", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::remove_dir_all", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::rename", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::copy", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::hard_link", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::symlink", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::metadata", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::canonicalize", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::read_dir", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::read_link", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::set_permissions", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::try_exists", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::File::open", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::File::create", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  # The twins of four std rows already banned above:
+  # `File::create_new` is `std::fs::File::create_new`,
+  # `File::options` is `std::fs::File::options` (the builder entry point
+  # that reaches `OpenOptions::open`), `DirBuilder::new` and
+  # `DirBuilder::create` are `std::fs::DirBuilder`'s. Each exists in the
+  # locked tokio and each opens or creates by PATH, following every
+  # component, exactly as its std twin does.
+  { path = "tokio::fs::File::create_new", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::File::options", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::OpenOptions::new", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::OpenOptions::open", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::DirBuilder::new", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+  { path = "tokio::fs::DirBuilder::create", reason = "route filesystem access through fsguard, or license the site with #[expect] and a written reason" },
+]
+
+# The concurrency bans: out of bounds in granary-sim and in
+# any code the sim drives. `tokio::spawn` is the fourth of them and is a
+# method, so it sits above. `select!` randomises branch order from a
+# runtime RNG the sim cannot seed (`Builder::rng_seed` is
+# `cfg(tokio_unstable)`), and `join!`/`try_join!` on a current-thread
+# runtime poll the first-listed future to completion, so two publishers
+# never contend and a race scenario passes without a race in it.
+#
+# WHERE THIS IS LIVE, AND WHERE IT IS NOT. Live wherever tokio is in the
+# crate's graph — granary-client (lib + `gran`), granary-store's test
+# targets, and granary-net, which takes tokio directly for the accept
+# loop; verified with a positive control in granary-client, which is
+# the code the sim drives. granary-net is the one place the bans are
+# expected to fire on purpose: it is the layer the sim REPLACES rather
+# than drives, so its two spawn sites carry per-site `#[expect]`s with
+# reasons instead of being written around. These entries are also live
+# in granary-sim: its engine scheduling adapter names Tokio join channels
+# and deadline types, while its own seeded poll loop orders every task.
+# No Tokio spawning or polling combinator is used by that adapter.
+disallowed-macros = [
+  { path = "tokio::select", reason = "unseeded branch order; sequence the interleaving in the sim's scheduler" },
+  { path = "tokio::join", reason = "degenerate on a current-thread runtime — the first future runs to completion, so nothing contends" },
+  { path = "tokio::try_join", reason = "same polling order as join!, so the ban would have a one-word bypass without it" },
+]
+
+# Enforced only where the lint is enabled: the crate roots of granary-core,
+# -net, -store, -client, -server, -sim and the granary-server and gran
+# binaries deny it
+# (HashMap iteration order leaks nondeterminism into sim; raw bytes from
+# the OS generator are drawn in one sanctioned place).
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "BTreeMap or seeded hasher in core" },
+  { path = "std::collections::HashSet", reason = "BTreeSet or seeded hasher in core" },
+  { path = "std::hash::RandomState", reason = "ambient per-process entropy" },
+  # The INVERSE pattern from its six method-row neighbours above:
+  # measured, `rand::rngs::OsRng` resolves for granary-conformance/-net/
+  # -bench (rand 0.9.5's `os_rng` feature, which proptest's own `std`
+  # feature turns on) but NOT for granary-client/granary-store (rand
+  # 0.10.2, the version actually in THEIR graph, dropped that path
+  # entirely — checked against its source: no `rngs/os.rs`, no
+  # re-export). Same shared-boolean reasoning as above: stays flagged.
+  { path = "rand::rngs::OsRng", reason = "ambient entropy; use the Rng seam", allow-invalid = true },
+  # Banning the TYPE covers `new`, `default` and every other construction.
+  # Enforced in each crate root that denies the lint (the core, net,
+  # store, client, server and sim libraries, and the granary-server and
+  # gran binaries); the one licensed site is OsSecureRandom's `#[expect]`.
+  { path = "aws_lc_rs::rand::SystemRandom", reason = "raw random bytes come only from the SecureRandom seam (granary_net::secure_random::OsSecureRandom)" },
+]
+
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true
+
+# The wildcard-import key — carried verbatim from the root config, same
+# reasoning as its own comment there. This is a SCALAR key, so
+# check-fsguard-sites.sh's check 1 requires it to be `==` the root's
+# value, not merely present.
+warn-on-all-wildcard-imports = true

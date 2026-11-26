@@ -1,0 +1,81 @@
+magic	magic
+version	version 3
+exemptions-bound	unavailable exemptions
+exemptions-truncated	truncated
+v1-trailing-exemptions	trailing
+generation	generation
+base-empty	authority base length
+base-cap	field length
+pins-cap	pin count
+pins-order	pin order
+context-empty	context length
+volume	volume
+volume-cap	field length
+policy	preparation policy
+initial-cap	field length
+initial-malformed	magic
+initial-seq-zero	root seq
+initial-seq-reserved	root seq
+initial-seq-maximum	root seq
+current-bool	boolean
+count	candidate count
+number-zero	candidate order
+number-order	candidate order
+role	role
+active-count	active cardinality
+current-epoch	current identity
+current-operation	current identity
+retired-epoch	retired epoch
+operation-reuse	operation crosses epochs
+seq-binding	candidate binding
+id-binding	candidate binding
+id-tag	grain id
+candidate-root-cap	field length
+candidate-root-malformed	magic
+root-volume	root volume
+root-ceiling	root seq
+manifest	frozen manifest
+proved	attempt counters
+answered	attempt counters
+decision-unstarted	attempt counters
+decision-bool	boolean
+phase	phase tag
+ready-empty	ready phase
+await-reference	candidate reference
+await-attempt	awaiting phase
+await-role	awaiting phase
+rebase-current	rebase phase
+epoch-current	epoch recovery phase
+probe-cycle	probe position
+probe-seq	probe position
+probe-start-reason	probe reason
+unresolved-reason	probe reason
+reason-tag	probe reason tag
+complete-current	complete current identity
+completion-seq	completion binding
+completion-id	completion binding
+completion-root	completion binding
+receipt-entry	completion receipt
+receipt-epoch	completion receipt
+receipt-seq	completion receipt
+receipt-id	completion receipt
+receipt-bool	boolean
+response-bool	boolean
+response-reference	candidate reference
+response-attempt	response attempt
+response-status	response status
+response-token-cap	field length
+response-token	response token
+response-answer-cap	field length
+answer-malformed	answer bytes
+self-check	check mismatch
+total-length	total length
+trailing	trailing bytes
+truncated	truncated
+initial-empty	root length
+c0-root-empty	root length
+rebase-seq-equal	rebase sequence
+rebase-seq-earlier	rebase sequence
+first-candidate-merged-manifest	frozen manifest
+status-low	response status
+pins-reversed	pin order

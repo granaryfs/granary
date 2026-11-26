@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+name: Bug report
+description: Report a reproducible problem in Granary.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Report vulnerabilities privately. Use **Report a vulnerability** in this
+        repository's **Security and quality** tab when available, or email
+        [adrian@adrianana.com](mailto:adrian@adrianana.com).
+        See `SECURITY.md` at the repository root for reporting details.
+        Remove credentials and personal data from logs before posting.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and architecture
+      description: Include the kernel version for mount problems.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: Include relevant errors or redacted logs.
+    validations:
+      required: true

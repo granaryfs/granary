@@ -1,0 +1,114 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+#
+# granary read-only mount, one instance per configured mount.
+# Configuration: /etc/granary/mounts/<instance>.env — see docs/operating-a-mount.md.
+#
+# THE INSTANCE NAME IS THE VOLUME NAME. ExecStart passes %i, never
+# ${GRAN_VOLUME}: CacheDirectory= below is keyed on the instance, so an
+# environment file free to name a different volume would let gran-mount@alpha
+# mount volume beta while its cache and configuration identity stayed alpha,
+# and would let two instances share one cache or split one volume across two.
+# With %i the instance IS the volume by construction, and an instance that is
+# not a DNS-1123 label is refused by gran's own VolumeName check.
+#
+# READINESS — READ THIS BEFORE DEPENDING ON THE MOUNT.
+# `systemctl start` returns when execve() of gran has SUCCEEDED (Type=exec).
+# That is before the trust gate, before the cache is opened, before the
+# whole-tree walk the mount does eagerly, and before the kernel mount. Nothing
+# in this unit signals that the mount exists, and `After=gran-mount@x.service`
+# orders a consumer after the daemon's exec, not after its mount. Worse, the
+# kernel mount is established inside fuser::Session::new while the thread that
+# ANSWERS requests is spawned afterwards, so even a mount-table row is not
+# proof that anything is serving. A consumer polls, under a bound, for
+#   findmnt -rn -o SOURCE,FSTYPE --mountpoint <GRAN_MOUNTPOINT>   -> gran fuse
+# and then for a successful READ of a known file. An sd_notify READY=1 sent
+# after a successful read (Type=notify) is a successor item; it is deliberately
+# not claimed here, because Type=notify without the handshake does not merely
+# overclaim — systemd fails the unit after TimeoutStartSec (90 s default).
+
+[Unit]
+Description=granary read-only mount %i
+Documentation=file:///usr/share/doc/granary/operating-a-mount.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+EnvironmentFile=/etc/granary/mounts/%i.env
+CacheDirectory=granary/%i
+CacheDirectoryMode=0700
+RuntimeDirectory=granary-umount
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+# /usr/local/bin/gran, not a path under /tmp or a network/virtiofs mount, and
+# NEVER installed by moving a file that started out somewhere
+# else: on an SELinux-enforcing host systemd (init_t) refuses to
+# execute a binary labelled user_tmp_t or a virtiofs/NFS mount's nfs_t --
+# status=203/EXEC -- and /usr/local/bin is bin_t by policy. `install`/`cp`
+# land bin_t; `mv` from /tmp PRESERVES user_tmp_t and reproduces the
+# failure. Relocating the binary is a drop-in (ExecStart= then
+# ExecStart=...), which docs/operating-a-mount.md documents.
+ExecStart=/usr/local/bin/gran mount %i ${GRAN_MOUNTPOINT} --endpoint ${GRAN_ENDPOINT} --pin ${GRAN_PIN} --root-key ${GRAN_ROOT_KEY} --cache-dir ${CACHE_DIRECTORY} --foreground $GRAN_MOUNT_EXTRA
+Restart=no
+
+# NO TimeoutStopSec= YET, and that is a decision rather than an omission.
+# Cache::close on the stop path flushes and may COMPACT synchronously; a bound
+# chosen before that cost is measured can turn a slow-but-correct close into a
+# SIGKILL, which leaves precisely the disconnected mount Restart=no exists to
+# avoid. systemd's default (90 s) applies until the compaction measurement
+# lands, and the field precedent is to RAISE this setting, never to lower it.
+#
+# Restart=no is likewise deliberate: a daemon killed after the stop timeout
+# leaves an ENOTCONN row at the mountpoint, and gran's own already-mounted
+# pre-flight then refuses every restart until an operator detaches it — so
+# Restart=on-failure would only flap to the start limit.
+
+# --- hardening, and every line here is namespace-free BY MEASUREMENT --------
+# Each directive below was executed against a real mount on systemd 259
+# (aarch64) and against the directive matrix on systemd 255 (x86_64), and left
+# the daemon in PID 1's mount namespace with its mount visible to the host.
+# @mount in the syscall filter is LOAD-BEARING, not decoration: without it the
+# mount dies with SIGSYS.
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SYS_ADMIN
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ProtectClock=yes
+ProtectHostname=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service @mount
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+DevicePolicy=closed
+DeviceAllow=/dev/fuse rw
+UMask=0077
+
+# --- DO NOT ADD ANY OF THESE ----------------------------------------------
+# PrivateMounts=yes, ProtectSystem=, ProtectHome=, PrivateTmp=, ReadOnlyPaths=,
+# ReadWritePaths=, InaccessiblePaths=, ExecPaths=, NoExecPaths=, BindPaths=,
+# BindReadOnlyPaths=, TemporaryFileSystem=, PrivateDevices=,
+# ProtectKernelTunables=, ProtectKernelModules=, ProtectKernelLogs=,
+# ProtectControlGroups=, ProtectProc=, ProcSubset=, MountAPIVFS=,
+# RootDirectory=, RootImage=, DynamicUser=, PrivateUsers=, PrivateNetwork=,
+# MountFlags=.
+# Each of them puts this service in its own mount namespace, and the mount it
+# then makes is INVISIBLE to every other process on the machine — which is the
+# opposite of what a mount unit is for. PrivateMounts=no does NOT undo that:
+# it is the default, and systemd.exec(5) says the other settings "enable file
+# system namespacing in a fashion equivalent to this option" and that
+# MountFlags=shared "does not reestablish propagation". Measured on systemd 255
+# and 259 alike, including this list's own ProtectSystem=strict with an
+# explicit PrivateMounts=no, which is invisible. One measured exception, stated
+# rather than smoothed over: PrivateUsers=yes stays in the host namespace but
+# makes the mount FAIL outright (rc 32) — so the list is "own namespace, or a
+# mount that cannot happen at all".
+# This comment is NOT the gate. scripts/unit-check.sh is: it starts this
+# unit, reads the mount table from a shell OUTSIDE the unit's cgroup, requires
+# the daemon to share PID 1's mount namespace, and has drop-in negatives that
+# make that check go red.
+
+[Install]
+WantedBy=multi-user.target

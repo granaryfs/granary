@@ -1,0 +1,129 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+
+[graph]
+# Metadata-level only (cargo-deny never compiles): without this the fips
+# feature's tree (aws-lc-fips-sys) escapes the licence/advisory gates.
+all-features = true
+
+[licenses]
+# Pure allowlist (v2). This list, not dependency-policy.md prose, is
+# authoritative (policy rule 4). Grow deliberately.
+allow = ["Apache-2.0", "MIT", "ISC", "BSD-3-Clause", "OpenSSL", "Unicode-3.0"]
+# AGPL scoped to OUR server crate only — a global allow would admit
+# third-party AGPL everywhere.
+exceptions = [
+    { name = "granary-server", allow = ["AGPL-3.0-or-later"] },
+    # CCADB/Mozilla root-store DATA shipped as a crate (via reqwest's
+    # rustls-platform-verifier under object_store). CDLA-Permissive-2.0
+    # is a data licence; scoped to the one data crate, never global.
+    { name = "webpki-root-certs", allow = ["CDLA-Permissive-2.0"] },
+    # NCSA (University of Illinois/NCSA Open Source License) on the VENDORED
+    # LLVM libFuzzer C++ sources that libfuzzer-sys's build script compiles:
+    # its declared expression is `(MIT OR Apache-2.0) AND NCSA`, so the
+    # Rust half is already allowed and only LLVM's half is not. NCSA is
+    # OSI-approved, FSF Free/Libre, and permissive BSD-style — the same
+    # class as the already-allowed BSD-3-Clause, whose obligations it
+    # mirrors (notice + no-endorsement). Scoped to the one crate, never
+    # global: this is LLVM's licence arriving with LLVM's code, not a
+    # licence granary is adopting. Reached only from the four nested fuzz
+    # workspaces, which no shipped graph depends on.
+    { name = "libfuzzer-sys", allow = ["NCSA"] },
+]
+
+[advisories]
+yanked = "deny"                 # default is warn — real gate
+# Written exceptions under docs/dependency-policy.md rule 4a ("Applied
+# decisions": chrono/humantime). Both are unmaintained-only advisories on
+# non-optional dependencies of the pinned object_store; granary calls neither.
+# The dependency policy records when to end or recheck these exceptions.
+ignore = [
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained; transitive via object_store only; recheck and exit conditions in docs/dependency-policy.md" },
+    { id = "RUSTSEC-2026-0542", reason = "humantime unmaintained (per its advisory, because chrono is); transitive via object_store only; recheck and exit conditions in docs/dependency-policy.md" },
+]
+
+[bans]
+multiple-versions = "warn"
+[bans.build]
+include-workspace = true        # without this, members' own build.rs are skipped
+# Grow ONLY with a written justification per dependency-policy rule 3 —
+# the comment on each entry IS that justification.
+allow-build-scripts = [
+    { name = "aws-lc-sys" },      # builds the vetted AWS-LC C/asm; accepted heavyweight (policy)
+    { name = "aws-lc-rs" },       # bindings layer's link/feature detection for AWS-LC; accepted heavyweight (policy)
+    { name = "aws-lc-fips-sys" }, # builds the FIPS-validated AWS-LC module (cmake+go+perl); in graph via [graph] all-features
+    { name = "blake3", version = "=1.8.7" }, # cc-built SIMD (NEON C on aarch64, asm on x86); version-pinned so a bump re-opens review
+    { name = "bindgen" },         # aws-lc-fips-sys build-dep: generates the FIPS FFI bindings; build-time only
+    { name = "clang-sys" },       # bindgen's libclang locator probe; build-time only, fips tree
+    { name = "prettyplease" },    # formats bindgen output; rustc version probe; build-time only, fips tree
+    { name = "proc-macro2" },     # rustc capability probe; plumbing under bindgen + serde_derive
+    { name = "quote" },           # rustc capability probe; plumbing under bindgen + serde_derive
+    { name = "getrandom" },       # MSan detection probe (emits getrandom_msan cfg); no codegen
+    { name = "libc" },            # cfg probe for libc/rustc feature detection; no codegen
+    { name = "rustls" },          # trivial cfg-emitting build script; no codegen, no C
+    { name = "serde" },           # rustc version probe + generated OUT_DIR shim (private.rs); no native code
+    { name = "serde_core" },      # rustc version probe + generated OUT_DIR shim (private.rs); no native code
+    { name = "serde_json" },      # target-arch probe (fast_arithmetic limb width); cfg emission only
+    { name = "zmij" },            # serde_json's number-formatting backend; rustc probe only
+    # --- criterion/proptest DEV trees (granary-bench only; never shipped,
+    # never in core's graph — the purity gate proves it). rule-6 memos in
+    # dependency-policy.md.
+    { name = "alloca", version = "=0.4.0" },      # criterion dep; COMPILES A C SHIM via cc at build time — accepted dev-only, same class as libfuzzer-sys in the fuzz workspace
+    { name = "crunchy" },     # criterion→ciborium→half; table-gen probe
+    { name = "num-traits" },  # criterion+proptest; autocfg feature probe
+    { name = "rustix" },      # proptest→tempfile; OS/libc capability probe
+    { name = "winapi" },                          # criterion→page_size; no-op off-Windows
+    { name = "winapi-i686-pc-windows-gnu" },      # winapi arch shim; no-op off-Windows
+    { name = "winapi-x86_64-pc-windows-gnu" },    # winapi arch shim; no-op off-Windows
+    { name = "wit-bindgen" }, # proptest wasm plumbing; no-op on native targets
+    { name = "zerocopy" },    # proptest→rand→ppv-lite86; rustc version probe
+    # runtime-entry tripwire: dep-inventory diff + the add-dependency skill fire if any of these ever enters a shipped graph.
+    # --- zstd (granary-bench, and granary-store/net for the
+    # per-grain frames). Compression is a rule-1 never-hand-roll dependency. Both
+    # entries are build-time; zstd-sys is the sharp one — it COMPILES
+    # THE VENDORED zstd C 1.5.7 via cc, the same class as blake3's NEON
+    # build and criterion's alloca shim. Version-pinned so any bump
+    # re-opens the build.rs review.
+    { name = "zstd-sys", version = "=2.1.2+zstd.1.5.7" }, # cc-builds vendored zstd C 1.5.7
+    { name = "zstd-safe", version = "=8.2.0" },            # cfg/link probe over zstd-sys; no codegen
+    # --- object_store =0.14.1 closure (granary-store `backend`;
+    # the whole closure is the priced cost of the S3 story).
+    # Real-target probes first, then dead-target trees the [graph]
+    # all-features/all-targets union drags in (they never compile here;
+    # same class as winapi above).
+    { name = "generic-array" },       # typenum/version probe; no codegen
+    { name = "httparse" },            # SIMD capability probe; cfg emission only
+    { name = "parking_lot_core" },    # atomic/OS capability probe; cfg emission only
+    { name = "rustversion" },         # rustc version probe; build-time only
+    { name = "thiserror" },           # rustc capability probe; cfg emission only
+    { name = "icu_normalizer_data" }, # ICU data blob (url/idna); build.rs only reads ICU4X_DATA_DIR and emits cfgs, no codegen
+    { name = "icu_properties_data" }, # ICU data blob (url/idna); build.rs locates packaged data, no codegen
+    { name = "iana-time-zone-haiku" }, # Haiku-target shim; no-op on granary targets
+    { name = "jni" },                  # Android-target tz lookup (iana-time-zone); no-op on granary targets
+    { name = "jni-macros" },           # Android-target tz lookup (iana-time-zone); no-op on granary targets
+    { name = "wasm-bindgen" },         # wasm32 tree under reqwest/chrono; no-op on granary targets
+    { name = "wasm-bindgen-shared" },  # wasm32 tree under reqwest/chrono; no-op on granary targets
+    # --- fuser =0.18.0 closure (granary-fuse — the read-only FUSE mount).
+    # Four build scripts. THREE are cfg/probe only; the fourth (ref-cast) also
+    # writes one fixed-template file that its lib.rs includes — see its own
+    # entry, which states exactly what it generates. None compiles C, and none
+    # takes external or attacker-reachable input. Version-pinned like the
+    # cc-building entries above, so a bump re-opens the review of what each
+    # build.rs actually does.
+    { name = "fuser", version = "=0.18.0" },     # pkg-config probe for libfuse, SKIPPED on Linux without the `libfuse` feature and on macOS under `macos-no-mount`; also emits the fuser_mount_impl cfg. No codegen, no C
+    { name = "memoffset", version = "=0.9.1" },  # nix dep; rustc version probe for const offset_of support; cfg emission only
+    { name = "nix", version = "=0.31.3" },       # fuser dep + granary-fuse's own umount2 edge + granary-server's direct edge (*at family, fstatfs, flock, fchown, geteuid; features fs, user; zero new packages); cfg_aliases target probe. No codegen, no C
+    { name = "ref-cast", version = "=1.0.27" },  # fuser dep; rustc capability probe AND one codegen step, which is why this comment differs from its three siblings: build.rs `fs::write`s $OUT_DIR/private.rs from a fixed in-source template with only the crate's own CARGO_PKG_VERSION_PATCH substituted, and src/lib.rs `include!`s it (dtolnay's version-namespacing idiom against proc-macro ABI collisions across crate versions in one graph). No external or attacker-reachable input goes in, and no C is compiled. Version-pinned, so a bump re-opens this review
+    # --- the four NESTED FUZZ WORKSPACES (crates/{granary-core,granary-store,
+    # granary-client,granary-fuse}/fuzz), each its own workspace with its own committed lock.
+    # This config is now run against all five roots, not just this one; see
+    # scripts/local-gates.sh and .github/workflows/ci.yml. Before that, the fuzz
+    # graphs were outside every supply-chain control, which violated
+    # docs/dependency-policy.md:25 and had already hidden a YANKED chacha20
+    # 0.10.1 in the client fuzz lock while root held 0.10.2 and the gate passed.
+    { name = "libfuzzer-sys", version = "=0.4.13" }, # read, not assumed: build.rs compiles the VENDORED LLVM libFuzzer C++ sources with `cc` (cpp(true), std c++17, force_frame_pointer, -> libfuzzer.a), or links a prebuilt one from $CUSTOM_LIBFUZZER_PATH. Same class as zstd-sys's vendored C and criterion's alloca shim, both already accepted above — and dev/fuzz-only: no shipped graph reaches it (the fuzz workspaces are not workspace members). Version-pinned, so a bump re-opens this review
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

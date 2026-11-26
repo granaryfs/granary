@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "granary-store"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "object_store adapters: bins, RootStore CAS"
+
+[features]
+# Feature structure: the client slim-down (verify without an
+# object-store backend) is a feature selection, not a crate refactor.
+# Everything is on by default.
+default = ["codec", "crypto", "backend"]
+codec = ["dep:zstd"]        # grain frames: zstd bulk, level 3
+crypto = ["dep:aws-lc-rs"]  # root signatures: Ed25519
+backend = ["dep:object_store", "dep:reqwest"]  # bins + RootStore CAS on object stores (async; the RUNTIME belongs to callers), and the no-redirect HTTP client (http_client) every S3 store is built with
+# Build-works lane only: granary makes NO FIPS claim about signatures in
+# Phase 1 (the 1.18.0 fips module is submitted, not certified).
+fips = ["crypto", "aws-lc-rs/fips"]
+
+[dependencies]
+granary-core = { path = "../granary-core" }
+zstd = { workspace = true, optional = true }
+aws-lc-rs = { workspace = true, optional = true }
+object_store = { workspace = true, optional = true }
+# `http_client`: object_store builds its reqwest client with reqwest's default
+# redirect policy and has no switch for it, so this crate builds the client.
+# The features are the ones object_store itself enables.
+reqwest = { workspace = true, optional = true, features = ["rustls", "http2"] }
+
+[dev-dependencies]
+# #[tokio::test] needs the runtime in tests only — granary-store itself
+# is runtime-agnostic (callers own the executor).
+tokio = { workspace = true }
+# The bounded-read tests need a DISHONEST backend, which means fabricating
+# a `GetResultPayload::Stream` — and IMPLEMENTING `Stream` requires naming
+# the trait. The library does not: it only calls `poll_next` on a
+# `dyn Stream` object_store already handed it, which resolves without an
+# import. Dev-only, and already in the lock via object_store.
+futures-core = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,181 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+
+[test-groups.sync-large-fixtures]
+max-threads = 1
+
+[test-groups.sync-commit-faults]
+max-threads = 2
+
+[profile.default]
+retries = 0
+
+# The sim suite's two standing per-test rules, in ONE block on the
+# DEFAULT profile: nextest wants a filter to carry all of its settings
+# together, and profile inheritance copies overrides, so `ci` gets these
+# by inheriting rather than by a second copy that can drift.
+#
+# retries = 0 FOREVER: a retry-pass in the sim suite is a determinism bug
+# being hidden.
+#
+# slow-timeout TERMINATES rather than warns: deadlock is one of the two
+# headline bug classes a deterministic sim exists to find, and without a
+# terminate-after it surfaces as a job that hangs while nextest prints
+# SLOW forever — a tripwire that never reports. 30s x 2 is ~60s against a
+# suite whose whole run is under a tenth of a second, so the only thing
+# it can catch is a genuinely stuck test. The scheduler's own poll budget
+# is the first line and gives a diagnostic; this is the backstop for
+# everything that hangs OUTSIDE the poll loop.
+# The spill-list fault sweep re-encodes a 64-MiB fixture for every discovered
+# metadata occurrence. Its bounded work exceeds the small-scenario tripwire.
+# The coalescer's pressure row zero-fills a staging file past the pressure
+# threshold once per seed: about 16 s alone, 45 s beside the suite, and it
+# reached the 60 s kill in a full local battery.
+[[profile.default.overrides]]
+filter = "package(granary-sim) & (test(metadata_) | test(=pressure_wakes_coalescer_immediately))"
+retries = 0
+slow-timeout = { period = "60s", terminate-after = 6 }
+test-group = "sync-large-fixtures"
+
+# The commit fault point tests each run six full engine pairs, and started
+# together they saturate the CPUs: `fsync_waits_for_inflight_commit`, about
+# 22 s alone, reached the 60 s kill beside them. Two at a time keeps the rest
+# of the suite's tests off a saturated machine. This block sets only the
+# group, so the block below still supplies retries and the slow-timeout.
+[[profile.default.overrides]]
+filter = "package(granary-sim) & test(/^commit_faults::/)"
+test-group = "sync-commit-faults"
+
+[[profile.default.overrides]]
+filter = "package(granary-sim)"
+retries = 0
+slow-timeout = { period = "30s", terminate-after = 2 }
+
+
+# granary-client hosts the fetcher's hand-rolled poll_fn multiplexer,
+# whose failure mode for an accounting bug is a WEDGE, not a failure:
+# a dropped byte-budget release was measured leaving the suite parked at
+# 0% CPU while nextest printed SLOW forever. Same rationale as the sim
+# block above — deadlock is a headline bug class here too, and a
+# tripwire that never reports is not a tripwire. 60s x 2 is ~40x the
+# whole crate suite's wall time, so only a genuinely stuck test can
+# trip it.
+# `granary-cli` is named alongside it because the binary's three
+# integration suites (cache_cli, determinism_fixture, harvest_integration)
+# moved there with `gran` and they SPAWN it — the wedge class this
+# override exists for travels with them. A filter naming only the client
+# would keep passing while covering 258 fewer tests — an override that
+# stops COVERING rather than breaking, which is the failure mode this
+# whole comment exists for. EXECUTED: the union filterset parses and selects
+# 625 + 258.
+[[profile.default.overrides]]
+filter = "package(granary-client) + package(granary-cli)"
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+# granary-net's accept-loop suite runs real multi-thread tokio runtimes
+# with real sockets, and their teardown occasionally outlives nextest's
+# 100 ms leak-timeout default under parallel load. Measured: an
+# intermittent PASS-with-LEAK, on a DIFFERENT test each run — the mark of
+# a teardown that is merely slow, not of a process that is stuck. 500 ms
+# silences the false flag; a genuinely leaked process still holds the
+# handle for the whole run and still trips it.
+#
+# On the DEFAULT profile only, same as the block above: `ci` inherits it.
+# VERIFIED rather than assumed — an override declared only here fired
+# under `--profile ci` (nextest 0.9.143), so a second copy would only be
+# something to drift.
+[[profile.default.overrides]]
+filter = "package(granary-net)"
+leak-timeout = "500ms"
+
+# granary-core hosts the manifest walker's repeated-leaf bound test,
+# which is fast only while the leaf memo holds: a regression re-opens
+# ~154 GB of per-visit clone+hash+decode and the test becomes a hang,
+# not a failure — the same tripwire-that-never-reports class as the two
+# blocks above. Measured 2026-08-24: full crate suite 1.1 s, slowest
+# test 0.85 s, so 60s x 2 only ever catches a genuinely degenerate run.
+[[profile.default.overrides]]
+filter = "package(granary-core)"
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+# `recovery_resumes_after_connection_lifetime_expiry` holds tokio's paused
+# clock for the whole row, so a stalled request never reaches its own
+# timeout: its failure mode is a hang. It passes in under 1.5 s under load,
+# so 30s x 2 only catches a wedged run.
+[[profile.default.overrides]]
+filter = "package(granary-server) & test(recovery_resumes_after_connection_lifetime_expiry)"
+slow-timeout = { period = "30s", terminate-after = 2 }
+
+[profile.ci]
+inherits = "default"
+fail-fast = false
+
+# This override bounds TWO things:
+#
+# - `granary-vfs`: `self_referential_nodes_map_terminates` feeds a cyclic
+#   `nodes` map whose FAILURE MODE IS A HANG, not an assertion. The
+#   directory-worklist memo in `Snapshot::new` makes it terminate. Measured
+#   with that memo removed: the probe ran 90 seconds and had to be killed.
+#   A test that wedges the suite instead of failing it is worse than no
+#   test, so this bounds it. (It passes in ~0.01 s.)
+# - `granary-fuse`: 62 rows run on the HOST (`cargo nextest run -p
+#   granary-fuse`, measured 2026-09-12) across
+#   filesystem/listing/options/capability/errno, PLUS `mechanism.rs`'s
+#   44 Linux-only rows (`#[cfg(target_os = "linux")]`), which drive REAL
+#   MOUNTS in the container lane — a hang-capable class in its own
+#   right, with no single named subject. The 44 are ADDITIONAL to the
+#   62, not the whole of what this half of the filter bounds — do not
+#   read this override as existing only for the container lane's 44:
+#   narrowing or retargeting it would also drop the ~60s bound from the
+#   62 host-run tests, which is the precise mistake this comment is
+#   written to prevent.
+#
+# A retarget to `package(granary-vfs)` alone would silently strip the
+# ~60s bound this second half depends on.
+[[profile.default.overrides]]
+filter = 'package(granary-fuse) | package(granary-vfs)'
+slow-timeout = { period = "30s", terminate-after = 2 }
+
+# granary-fuse's row-4 forget-accounting tests provoke reclaim by writing
+# the cgroup's `memory.high` and `memory.reclaim` knobs — knobs that are
+# PER CGROUP, not per process, and every test process in the lane sits in
+# the same one. nextest runs each test in its own process, so three
+# row-4 tests running at once race on `memory.high`: each captures the
+# value it sees, lowers it to 16 MiB, then "restores" — and a sibling's
+# TEMPORARY 16 MiB is exactly what it can see and restore permanently,
+# throttling everything else in the cgroup for the rest of the run. An
+# in-process guard cannot order processes; this group can: at most one
+# row-4 test touches the knobs at a time. Cost: the three run back to
+# back (~20 s each when the environment never produces a FORGET).
+#
+# On the DEFAULT profile, same as every block above: `ci` inherits it.
+[test-groups]
+cgroup = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(granary-fuse) & test(/row4_/)'
+test-group = "cgroup"
+
+[test-groups.mounted-large-fixtures]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = 'package(granary-client) & test(mounted::indexed::)'
+test-group = "mounted-large-fixtures"
+
+# The CLI's daemon rows each mount a real FUSE filesystem and then read the
+# mount table to tell a clean end from a mount that survived. The daemon
+# identifies its mount by the superblock's device number, which the kernel
+# hands to the next anonymous mount at once, so a sibling row mounting while
+# a daemon ends can read as that daemon's mount still listed: a clean end
+# exits 1. That is the rule's documented safe-direction residual, not a
+# defect, but rows that assert exit 0 cannot mount beside each other. One at
+# a time, the archive takes about 17 s against about 6 s in parallel. CI's
+# fuse job and `scripts/linux-container.sh mount` run this archive on its
+# own; a run that mounts other packages' rows beside it can still collide.
+[test-groups.daemon-mounts]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = 'package(granary-cli) & test(/^attach::tests::daemon_linux::/)'
+test-group = "daemon-mounts"

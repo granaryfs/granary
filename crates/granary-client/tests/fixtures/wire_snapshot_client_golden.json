@@ -1,0 +1,18 @@
+{
+  "format_version": 1,
+  "writer_kind": "granary-client",
+  "run_id": "golden-run-0001",
+  "role": "publisher",
+  "poisoned": false,
+  "response_bytes": 654321,
+  "endpoint": "https://granary.example:9443",
+  "pinned_seq": 41,
+  "publish": {
+    "seq": 42,
+    "novel_objects": 9,
+    "novel_bytes": 987654,
+    "bins_uploaded": 2,
+    "bin_bytes_uploaded": 500000,
+    "manifest_root": "blake3:0123456789abcdef"
+  }
+}

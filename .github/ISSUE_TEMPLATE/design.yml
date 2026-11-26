@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+name: Design proposal
+description: Discuss a potential change to Granary's behavior or contracts.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe who is affected and when.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Include compatibility implications and any alternatives you considered.
+    validations:
+      required: true

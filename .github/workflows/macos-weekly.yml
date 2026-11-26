@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+name: macos-weekly
+on:
+  schedule:
+    - cron: "0 7 * * 6"
+  workflow_dispatch:
+permissions: {}
+env:
+  CARGO_BUILD_WARNINGS: deny
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 25
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: record server process baseline
+        run: python3 scripts/check-server-processes.py begin --state "$RUNNER_TEMP/server-processes.json" --root "$GITHUB_WORKSPACE" --root "$RUNNER_TEMP"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with: { tool: cargo-nextest@0.9.143 }
+      - name: test macOS and retain the Cargo artifact inventory
+        id: nextest
+        run: |
+          cargo nextest run --profile ci --locked --cargo-message-format json,json-render-diagnostics \
+            > "$RUNNER_TEMP/nextest-artifacts.jsonl"
+      - name: report test binary unwind sizes
+        if: ${{ !cancelled() && steps.nextest.outcome != 'skipped' }}
+        continue-on-error: true
+        run: |
+          if ! python3 scripts/report-macos-unwind.py "$RUNNER_TEMP/nextest-artifacts.jsonl" >> "$GITHUB_STEP_SUMMARY"; then
+            echo 'Unwind sizes unavailable. See the report step log.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+      - run: cargo test --doc --locked
+      - name: no server may survive this job
+        if: always()
+        run: python3 scripts/check-server-processes.py check --state "$RUNNER_TEMP/server-processes.json"

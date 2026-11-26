@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+# Own workspace ([workspace] below): libfuzzer-sys + cc must never enter
+# the parent lockfile/graph. Own Cargo.lock, committed. The granary-core
+# fuzz workspace is the precedent this one follows exactly — including
+# that libfuzzer-sys and cc escape `cargo deny` and `cargo-shear`, both
+# of which are main-workspace-only.
+
+[package]
+name = "granary-store-fuzz"
+version = "0.0.0"
+publish = false
+# Stated so `cargo deny check licenses` can read it: these crates ARE
+# Apache-2.0 (the SPDX header above, and LICENSES/ via REUSE), but a
+# `publish = false` package with no `license` field reports as
+# `unlicensed` and failed the gate that never looked here.
+license = "Apache-2.0"
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+
+# `codec` alone, and DEFAULTS OFF. The default set drags `crypto`
+# (aws-lc-rs, which builds C and Go at cmake time) and `backend`
+# (object_store's whole async closure) into a workspace whose one target
+# calls `verify_bin`. Neither is on the ingest verify path, and paying
+# for them would put a cmake toolchain between the weekly lane and the
+# fuzzing it exists to do.
+[dependencies.granary-store]
+path = ".."
+default-features = false
+features = ["codec"]
+
+# Use independent workspace for fuzzers
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "bin_ingest"
+path = "fuzz_targets/bin_ingest.rs"
+test = false
+doc = false
+bench = false

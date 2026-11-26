@@ -1,0 +1,402 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+# HELP granary_client_metrics_schema_version Catalogue schema version.
+# TYPE granary_client_metrics_schema_version gauge
+granary_client_metrics_schema_version 2
+# HELP granary_client_metrics_incarnation Store incarnation as four unsigned 32-bit words.
+# TYPE granary_client_metrics_incarnation gauge
+granary_client_metrics_incarnation{word="0"} 66051
+granary_client_metrics_incarnation{word="1"} 67438087
+granary_client_metrics_incarnation{word="2"} 134810123
+granary_client_metrics_incarnation{word="3"} 202182159
+# HELP granary_client_metrics_available Producer wired and usable.
+# TYPE granary_client_metrics_available gauge
+granary_client_metrics_available{group="cache"} 1
+granary_client_metrics_available{group="transport"} 1
+granary_client_metrics_available{group="sync"} 1
+granary_client_metrics_available{group="commit"} 1
+granary_client_metrics_available{group="contention"} 1
+granary_client_metrics_available{group="fuse"} 1
+# HELP granary_client_metrics_overflow Sticky metric invalidity; missing series are not resets.
+# TYPE granary_client_metrics_overflow gauge
+granary_client_metrics_overflow{metric="M02"} 0
+granary_client_metrics_overflow{metric="M05"} 0
+granary_client_metrics_overflow{metric="M06"} 0
+granary_client_metrics_overflow{metric="M07"} 0
+granary_client_metrics_overflow{metric="M08"} 0
+granary_client_metrics_overflow{metric="M09"} 0
+granary_client_metrics_overflow{metric="M10"} 0
+granary_client_metrics_overflow{metric="M11"} 0
+granary_client_metrics_overflow{metric="M12"} 0
+granary_client_metrics_overflow{metric="M13"} 0
+granary_client_metrics_overflow{metric="M14"} 0
+granary_client_metrics_overflow{metric="M15"} 0
+granary_client_metrics_overflow{metric="M16"} 0
+granary_client_metrics_overflow{metric="M17"} 0
+granary_client_metrics_overflow{metric="M18"} 0
+granary_client_metrics_overflow{metric="M20"} 0
+granary_client_metrics_overflow{metric="M21"} 0
+# HELP granary_client_commits_total Local terminal observations per logical commit.
+# TYPE granary_client_commits_total counter
+granary_client_commits_total{result="ok"} 1
+granary_client_commits_total{result="conflict"} 1
+granary_client_commits_total{result="exhausted"} 1
+granary_client_commits_total{result="failed"} 1
+granary_client_commits_total{result="cancelled"} 1
+granary_client_commits_total{result="unknown"} 1
+# HELP granary_client_commit_duration_seconds Measured commit duration including retries and backoff.
+# TYPE granary_client_commit_duration_seconds histogram
+granary_client_commit_duration_seconds_bucket{result="ok",le="0.001"} 0
+granary_client_commit_duration_seconds_bucket{result="ok",le="0.005"} 1
+granary_client_commit_duration_seconds_bucket{result="ok",le="0.01"} 1
+granary_client_commit_duration_seconds_bucket{result="ok",le="0.025"} 1
+granary_client_commit_duration_seconds_bucket{result="ok",le="0.05"} 1
+granary_client_commit_duration_seconds_bucket{result="ok",le="0.1"} 1
+granary_client_commit_duration_seconds_bucket{result="ok",le="0.25"} 1
+granary_client_commit_duration_seconds_bucket{result="ok",le="0.5"} 1
+granary_client_commit_duration_seconds_bucket{result="ok",le="1"} 1
+granary_client_commit_duration_seconds_bucket{result="ok",le="5"} 1
+granary_client_commit_duration_seconds_bucket{result="ok",le="30"} 1
+granary_client_commit_duration_seconds_bucket{result="ok",le="+Inf"} 1
+granary_client_commit_duration_seconds_sum{result="ok"} 0.005000
+granary_client_commit_duration_seconds_count{result="ok"} 1
+granary_client_commit_duration_seconds_bucket{result="conflict",le="0.001"} 0
+granary_client_commit_duration_seconds_bucket{result="conflict",le="0.005"} 1
+granary_client_commit_duration_seconds_bucket{result="conflict",le="0.01"} 1
+granary_client_commit_duration_seconds_bucket{result="conflict",le="0.025"} 1
+granary_client_commit_duration_seconds_bucket{result="conflict",le="0.05"} 1
+granary_client_commit_duration_seconds_bucket{result="conflict",le="0.1"} 1
+granary_client_commit_duration_seconds_bucket{result="conflict",le="0.25"} 1
+granary_client_commit_duration_seconds_bucket{result="conflict",le="0.5"} 1
+granary_client_commit_duration_seconds_bucket{result="conflict",le="1"} 1
+granary_client_commit_duration_seconds_bucket{result="conflict",le="5"} 1
+granary_client_commit_duration_seconds_bucket{result="conflict",le="30"} 1
+granary_client_commit_duration_seconds_bucket{result="conflict",le="+Inf"} 1
+granary_client_commit_duration_seconds_sum{result="conflict"} 0.005000
+granary_client_commit_duration_seconds_count{result="conflict"} 1
+granary_client_commit_duration_seconds_bucket{result="exhausted",le="0.001"} 0
+granary_client_commit_duration_seconds_bucket{result="exhausted",le="0.005"} 1
+granary_client_commit_duration_seconds_bucket{result="exhausted",le="0.01"} 1
+granary_client_commit_duration_seconds_bucket{result="exhausted",le="0.025"} 1
+granary_client_commit_duration_seconds_bucket{result="exhausted",le="0.05"} 1
+granary_client_commit_duration_seconds_bucket{result="exhausted",le="0.1"} 1
+granary_client_commit_duration_seconds_bucket{result="exhausted",le="0.25"} 1
+granary_client_commit_duration_seconds_bucket{result="exhausted",le="0.5"} 1
+granary_client_commit_duration_seconds_bucket{result="exhausted",le="1"} 1
+granary_client_commit_duration_seconds_bucket{result="exhausted",le="5"} 1
+granary_client_commit_duration_seconds_bucket{result="exhausted",le="30"} 1
+granary_client_commit_duration_seconds_bucket{result="exhausted",le="+Inf"} 1
+granary_client_commit_duration_seconds_sum{result="exhausted"} 0.005000
+granary_client_commit_duration_seconds_count{result="exhausted"} 1
+granary_client_commit_duration_seconds_bucket{result="failed",le="0.001"} 0
+granary_client_commit_duration_seconds_bucket{result="failed",le="0.005"} 1
+granary_client_commit_duration_seconds_bucket{result="failed",le="0.01"} 1
+granary_client_commit_duration_seconds_bucket{result="failed",le="0.025"} 1
+granary_client_commit_duration_seconds_bucket{result="failed",le="0.05"} 1
+granary_client_commit_duration_seconds_bucket{result="failed",le="0.1"} 1
+granary_client_commit_duration_seconds_bucket{result="failed",le="0.25"} 1
+granary_client_commit_duration_seconds_bucket{result="failed",le="0.5"} 1
+granary_client_commit_duration_seconds_bucket{result="failed",le="1"} 1
+granary_client_commit_duration_seconds_bucket{result="failed",le="5"} 1
+granary_client_commit_duration_seconds_bucket{result="failed",le="30"} 1
+granary_client_commit_duration_seconds_bucket{result="failed",le="+Inf"} 1
+granary_client_commit_duration_seconds_sum{result="failed"} 0.005000
+granary_client_commit_duration_seconds_count{result="failed"} 1
+granary_client_commit_duration_seconds_bucket{result="cancelled",le="0.001"} 0
+granary_client_commit_duration_seconds_bucket{result="cancelled",le="0.005"} 1
+granary_client_commit_duration_seconds_bucket{result="cancelled",le="0.01"} 1
+granary_client_commit_duration_seconds_bucket{result="cancelled",le="0.025"} 1
+granary_client_commit_duration_seconds_bucket{result="cancelled",le="0.05"} 1
+granary_client_commit_duration_seconds_bucket{result="cancelled",le="0.1"} 1
+granary_client_commit_duration_seconds_bucket{result="cancelled",le="0.25"} 1
+granary_client_commit_duration_seconds_bucket{result="cancelled",le="0.5"} 1
+granary_client_commit_duration_seconds_bucket{result="cancelled",le="1"} 1
+granary_client_commit_duration_seconds_bucket{result="cancelled",le="5"} 1
+granary_client_commit_duration_seconds_bucket{result="cancelled",le="30"} 1
+granary_client_commit_duration_seconds_bucket{result="cancelled",le="+Inf"} 1
+granary_client_commit_duration_seconds_sum{result="cancelled"} 0.005000
+granary_client_commit_duration_seconds_count{result="cancelled"} 1
+granary_client_commit_duration_seconds_bucket{result="unknown",le="0.001"} 0
+granary_client_commit_duration_seconds_bucket{result="unknown",le="0.005"} 1
+granary_client_commit_duration_seconds_bucket{result="unknown",le="0.01"} 1
+granary_client_commit_duration_seconds_bucket{result="unknown",le="0.025"} 1
+granary_client_commit_duration_seconds_bucket{result="unknown",le="0.05"} 1
+granary_client_commit_duration_seconds_bucket{result="unknown",le="0.1"} 1
+granary_client_commit_duration_seconds_bucket{result="unknown",le="0.25"} 1
+granary_client_commit_duration_seconds_bucket{result="unknown",le="0.5"} 1
+granary_client_commit_duration_seconds_bucket{result="unknown",le="1"} 1
+granary_client_commit_duration_seconds_bucket{result="unknown",le="5"} 1
+granary_client_commit_duration_seconds_bucket{result="unknown",le="30"} 1
+granary_client_commit_duration_seconds_bucket{result="unknown",le="+Inf"} 1
+granary_client_commit_duration_seconds_sum{result="unknown"} 0.005000
+granary_client_commit_duration_seconds_count{result="unknown"} 1
+# HELP granary_client_commit_retries_total Additional commit attempts actually started.
+# TYPE granary_client_commit_retries_total counter
+granary_client_commit_retries_total{reason="transient"} 1
+granary_client_commit_retries_total{reason="conflict"} 1
+granary_client_commit_retries_total{reason="unavailable"} 1
+# HELP granary_client_rebase_conflicts_total Rebase attempts detecting overlapping names.
+# TYPE granary_client_rebase_conflicts_total counter
+granary_client_rebase_conflicts_total 1
+# HELP granary_client_contention_flag Authoritative contention policy decision.
+# TYPE granary_client_contention_flag gauge
+granary_client_contention_flag 1
+# HELP granary_client_syncs_total Completed sync engine calls.
+# TYPE granary_client_syncs_total counter
+granary_client_syncs_total{outcome="ok"} 1
+granary_client_syncs_total{outcome="failed"} 1
+granary_client_syncs_total{outcome="cancelled"} 1
+granary_client_syncs_total{outcome="refused"} 1
+# HELP granary_client_intent_registrations_total Terminal registration exchanges.
+# TYPE granary_client_intent_registrations_total counter
+granary_client_intent_registrations_total{result="ok"} 1
+granary_client_intent_registrations_total{result="failed"} 1
+granary_client_intent_registrations_total{result="cancelled"} 1
+granary_client_intent_registrations_total{result="unknown"} 1
+# HELP granary_client_intent_registration_duration_seconds Measured registration exchange duration.
+# TYPE granary_client_intent_registration_duration_seconds histogram
+granary_client_intent_registration_duration_seconds_bucket{result="ok",le="0.001"} 0
+granary_client_intent_registration_duration_seconds_bucket{result="ok",le="0.005"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="ok",le="0.01"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="ok",le="0.025"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="ok",le="0.05"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="ok",le="0.1"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="ok",le="0.25"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="ok",le="0.5"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="ok",le="1"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="ok",le="5"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="ok",le="30"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="ok",le="+Inf"} 1
+granary_client_intent_registration_duration_seconds_sum{result="ok"} 0.001001
+granary_client_intent_registration_duration_seconds_count{result="ok"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="failed",le="0.001"} 0
+granary_client_intent_registration_duration_seconds_bucket{result="failed",le="0.005"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="failed",le="0.01"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="failed",le="0.025"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="failed",le="0.05"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="failed",le="0.1"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="failed",le="0.25"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="failed",le="0.5"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="failed",le="1"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="failed",le="5"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="failed",le="30"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="failed",le="+Inf"} 1
+granary_client_intent_registration_duration_seconds_sum{result="failed"} 0.001001
+granary_client_intent_registration_duration_seconds_count{result="failed"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="cancelled",le="0.001"} 0
+granary_client_intent_registration_duration_seconds_bucket{result="cancelled",le="0.005"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="cancelled",le="0.01"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="cancelled",le="0.025"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="cancelled",le="0.05"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="cancelled",le="0.1"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="cancelled",le="0.25"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="cancelled",le="0.5"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="cancelled",le="1"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="cancelled",le="5"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="cancelled",le="30"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="cancelled",le="+Inf"} 1
+granary_client_intent_registration_duration_seconds_sum{result="cancelled"} 0.001001
+granary_client_intent_registration_duration_seconds_count{result="cancelled"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="unknown",le="0.001"} 0
+granary_client_intent_registration_duration_seconds_bucket{result="unknown",le="0.005"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="unknown",le="0.01"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="unknown",le="0.025"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="unknown",le="0.05"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="unknown",le="0.1"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="unknown",le="0.25"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="unknown",le="0.5"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="unknown",le="1"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="unknown",le="5"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="unknown",le="30"} 1
+granary_client_intent_registration_duration_seconds_bucket{result="unknown",le="+Inf"} 1
+granary_client_intent_registration_duration_seconds_sum{result="unknown"} 0.001001
+granary_client_intent_registration_duration_seconds_count{result="unknown"} 1
+# HELP granary_client_sync_grains_uploaded_total Grains in novel successful bin uploads.
+# TYPE granary_client_sync_grains_uploaded_total counter
+granary_client_sync_grains_uploaded_total 3
+# HELP granary_client_sync_uploaded_bytes_total Encoded payload bytes in novel successful uploads.
+# TYPE granary_client_sync_uploaded_bytes_total counter
+granary_client_sync_uploaded_bytes_total{object="bin"} 7
+granary_client_sync_uploaded_bytes_total{object="meta"} 11
+# HELP granary_client_sync_rechunk_fallbacks_total Whole-file rechunk fallbacks.
+# TYPE granary_client_sync_rechunk_fallbacks_total counter
+granary_client_sync_rechunk_fallbacks_total 1
+# HELP granary_client_cache_lookups_total Final cache hits and admitted misses per distinct want.
+# TYPE granary_client_cache_lookups_total counter
+granary_client_cache_lookups_total{phase="startup",result="hit"} 1
+granary_client_cache_lookups_total{phase="startup",result="miss"} 1
+granary_client_cache_lookups_total{phase="read",result="hit"} 1
+granary_client_cache_lookups_total{phase="read",result="miss"} 1
+# HELP granary_client_cache_hit_ratio Sampled hits divided by sampled hits plus misses.
+# TYPE granary_client_cache_hit_ratio gauge
+granary_client_cache_hit_ratio{phase="startup"} 0.5
+granary_client_cache_hit_ratio{phase="read"} 0.5
+# HELP granary_client_transport_body_bytes_total HTTP payload offered up or DATA observed down, not wire-exact.
+# TYPE granary_client_transport_body_bytes_total counter
+granary_client_transport_body_bytes_total{direction="up"} 13
+granary_client_transport_body_bytes_total{direction="down"} 17
+# HELP granary_client_fuse_requests_total Dispatched reply-bearing callback completions.
+# TYPE granary_client_fuse_requests_total counter
+granary_client_fuse_requests_total{callback="lookup",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="lookup",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="lookup",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="lookup",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="getattr",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="getattr",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="getattr",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="getattr",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="readlink",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="readlink",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="readlink",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="readlink",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="open",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="open",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="open",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="open",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="read",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="read",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="read",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="read",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="release",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="release",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="release",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="release",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="opendir",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="opendir",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="opendir",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="opendir",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="readdir",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="readdir",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="readdir",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="readdir",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="readdirplus",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="readdirplus",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="readdirplus",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="readdirplus",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="releasedir",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="releasedir",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="releasedir",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="releasedir",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="statfs",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="statfs",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="statfs",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="statfs",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="access",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="access",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="access",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="access",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="getxattr",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="getxattr",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="getxattr",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="getxattr",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="listxattr",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="listxattr",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="listxattr",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="listxattr",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="setattr",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="setattr",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="setattr",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="setattr",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="mknod",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="mknod",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="mknod",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="mknod",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="mkdir",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="mkdir",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="mkdir",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="mkdir",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="unlink",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="unlink",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="unlink",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="unlink",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="rmdir",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="rmdir",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="rmdir",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="rmdir",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="symlink",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="symlink",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="symlink",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="symlink",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="rename",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="rename",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="rename",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="rename",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="link",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="link",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="link",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="link",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="write",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="write",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="write",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="write",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="flush",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="flush",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="flush",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="flush",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="fsync",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="fsync",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="fsync",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="fsync",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="fsyncdir",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="fsyncdir",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="fsyncdir",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="fsyncdir",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="setxattr",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="setxattr",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="setxattr",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="setxattr",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="removexattr",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="removexattr",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="removexattr",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="removexattr",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="create",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="create",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="create",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="create",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="getlk",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="getlk",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="getlk",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="getlk",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="setlk",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="setlk",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="setlk",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="setlk",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="bmap",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="bmap",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="bmap",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="bmap",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="ioctl",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="ioctl",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="ioctl",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="ioctl",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="poll",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="poll",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="poll",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="poll",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="fallocate",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="fallocate",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="fallocate",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="fallocate",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="lseek",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="lseek",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="lseek",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="lseek",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="copy_file_range",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="copy_file_range",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="copy_file_range",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="copy_file_range",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="setvolname",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="setvolname",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="setvolname",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="setvolname",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="exchange",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="exchange",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="exchange",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="exchange",outcome="refused"} 1
+granary_client_fuse_requests_total{callback="getxtimes",outcome="ok"} 1
+granary_client_fuse_requests_total{callback="getxtimes",outcome="failed"} 1
+granary_client_fuse_requests_total{callback="getxtimes",outcome="cancelled"} 1
+granary_client_fuse_requests_total{callback="getxtimes",outcome="refused"} 1
+# HELP granary_client_mount_view_stale Writable mount authority view in the unreachable state.
+# TYPE granary_client_mount_view_stale gauge
+granary_client_mount_view_stale 1

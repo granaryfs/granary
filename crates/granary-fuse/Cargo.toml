@@ -1,0 +1,83 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "granary-fuse"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "fuser shim (linux only)"
+
+[dependencies]
+fuser = { workspace = true }
+granary-core = { path = "../granary-core" }
+granary-vfs = { path = "../granary-vfs" }
+
+# `user` alongside `mount`: the Linux-only test module below calls
+# `nix::unistd::{Uid, setuid}`, which live behind nix's `user` feature.
+# That feature is already active in this graph via `fuser`'s OWN nix
+# dependency (fuser needs `getuid`/`getgid` unconditionally, in its
+# default, non-feature-gated mount path) — so this line adds ZERO new
+# packages and ZERO new features to the resolved graph today. It is not
+# redundant: without it, the test module compiles only because fuser
+# happens to enable `user`, and a future fuser release trimming its own
+# nix feature list would silently break this crate's build with no
+# signal pointing here. Declaring the feature this crate actually
+# uses, on the line this crate actually owns, makes that failure mode
+# impossible instead of latent (verified by a
+# mutation probe patching a local fuser copy with `user` stripped
+# from ITS nix line: the compile broke without this line and this
+# line alone fixed it back, independent of fuser's own declaration,
+# because cargo unifies nix's feature set across every requester).
+# `fs` for the same reason, on the same line: `nix::unistd::truncate` (the
+# refusal-taxonomy tests' path-based truncate) lives behind it; fuser
+# enables it already, so this adds zero packages and zero graph features.
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { workspace = true, features = ["user", "fs"] }
+
+# The fuse-mechanism property tests (`src/mechanism.rs`) drive a real
+# mount with ordinary syscalls and need SAFE getdents64/seek/statvfs
+# — raw libc is out under this workspace's forbid-unsafe lint (see
+# `Cargo.toml`'s `[workspace.lints.rust]` table), which binds test code
+# too. rustix is ALREADY in the resolved graph at this exact version, via
+# tempfile <- proptest (`supply-chain/inventory.txt:178`) — so this edge
+# adds ZERO new PACKAGES. It DOES turn on rustix's `std` feature for this
+# crate's own build, and that is deliberate, not a contradiction: in the
+# FULL `--workspace` build tempfile already enables `std,fs`, so feature
+# UNION means no delta there; but in the ISOLATED `-p granary-fuse` build
+# the container-root test lane runs, tempfile is not in the graph, so THIS
+# edge is what supplies `fs`+`std` — which is exactly why it exists, so a
+# future trim of whatever else supplies them cannot silently break this
+# crate's test build with no signal pointing here (the same reasoning as
+# the `nix` edge just above). dev-dependency, not dependency: nothing
+# outside `#[cfg(test)]` names it. `default-features = false` plus an
+# explicit `std` (rather than plain `default-features = true`, to name
+# exactly the two features this crate uses): `std` is what makes rustix's
+# own `AsFd`/`BorrowedFd`/path types
+# interoperate with `std::os::fd`/`std::path` at all (EXECUTED: without it,
+# `cargo check --target x86_64-unknown-linux-gnu` fails E0277, rustix falls
+# back to its own no_std polyfill types under `maybe_polyfill::no_std`,
+# which do not satisfy `rustix::fd::AsFd` for a `std::os::fd::BorrowedFd`).
+# `fs` is the surface this module actually calls; `std` is what makes that
+# surface composable with the rest of this file's ordinary std types.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+rustix = { version = "=1.1.6", default-features = false, features = ["fs", "std"] }
+
+# The differential oracle's should-fail rounds need a reader
+# that lies in seven specific, committed ways. Off by default —
+# `[]` pulls no dependency and enables no other feature — so an ordinary
+# build never carries this surface at all. Every item this feature gates
+# lives behind `#[cfg(feature = "conformance-breakage")]`: the `Breakage`
+# enum, the two pure transforms (`bend_attr`, `follow_sibling`), the
+# cfg'd readdirplus sink wrapper, and the `breakage` field + `set_breakage`
+# on `GranaryFs`. `lib.rs` carries a `compile_error!` wall refusing this
+# feature in a release profile — see that file for the wall's
+# stated, executed strength.
+[features]
+conformance-breakage = []
+
+[lints]
+workspace = true

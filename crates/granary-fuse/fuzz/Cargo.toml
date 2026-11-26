@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+# Own workspace ([workspace] below): libfuzzer-sys + cc must never enter
+# the parent lockfile/graph. Own Cargo.lock, committed, following the
+# granary-client fuzz workspace.
+#
+# PR CI type-checks and lints this workspace with cargo clippy --all-targets
+# --locked. The stable replay in ../tests/fuzz_corpus_replay.rs exercises
+# the same probe on every push. The weekly lane (.github/workflows/fuzz.yml)
+# runs libFuzzer on nightly; the replay suite asserts its run line, cache
+# workspace and artifact upload.
+
+[package]
+name = "granary-fuse-fuzz"
+version = "0.0.0"
+publish = false
+license = "Apache-2.0"
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+
+[dependencies.granary-fuse]
+path = ".."
+
+# Use independent workspace for fuzzers
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "mountinfo_body"
+path = "fuzz_targets/mountinfo_body.rs"
+test = false
+doc = false
+bench = false

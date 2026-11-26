@@ -1,0 +1,198 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[package]
+name = "granary-server"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license = "AGPL-3.0-or-later"
+repository.workspace = true
+publish.workspace = true
+description = "granary server: verify-ingest, serve, CAS"
+
+# The lib exists so a handler can be CALLED at all: the crate's own tests,
+# the conformance run and the sim edge all need an importable surface, and a
+# `#[path = "../src/…"]` include does not compose across crates. Its surface
+# is curated in `lib.rs`, not the modules wholesale — the same curated
+# surface granary-client exposes. The bin does not use it: a `[lib]` and
+# a `[[bin]]` sit side by side.
+#
+# The licence boundary separately forbids other crates depending on this crate
+# (granary-client is Apache). Until this target existed the crate was
+# bin-only and therefore undependable, so "no Apache crate consumes the
+# AGPL crate" held structurally. It is a gate now:
+# scripts/check-licence-boundary.sh, in CI and in the local gates.
+[lib]
+name = "granary_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "granary-server"
+
+[dependencies]
+granary-core = { path = "../granary-core" }
+# `default-features = false` keeps the feature set this line names, and
+# only it. `granary-store` is NOT a `[workspace.dependencies]` entry, so
+# disabling defaults here is legal — a member cannot disable defaults a
+# workspace entry sets (an edition-2024 hard manifest error), which is why
+# this line has to live on the member.
+# `backend`: the binary composes the real store, so object_store is in the
+# graph.
+# `codec`: `verify::verify_bin` is the Apache-side ingest primitive §5.1's
+# grain verification is built on, and it decompresses, so zstd is on this
+# crate's account.
+# `crypto`: root signatures (Ed25519) for the publication authority, which
+# decides only on a valid root: `crypto::check_head` and
+# `crypto::check_signatures` under the volume's configured publisher keys
+# (`crypto::TrustedKeys`), with the reader's key rules. It brings aws-lc-rs, which this crate's normal graph already
+# reaches through granary-net and rustls. Its `fips` feature stays off here;
+# the fips lane builds it through granary-net.
+granary-store = { path = "../granary-store", default-features = false, features = ["backend", "codec", "crypto"] }
+# DIRECT, and it has to be: `main` names `object_store::memory::InMemory`
+# to build the one store `GRANARY_STORE=memory:` selects, and granary-store
+# exports no object_store type (only `http_client::NoRedirectConnector`, a
+# granary type implementing object_store's `HttpConnector` trait), so the
+# transitive crate is not nameable.
+# The precedent and the rationale are granary-client's manifest verbatim.
+# `memory` is in object_store's ungated base and the workspace entry is
+# already in the lock, so this adds no package.
+object_store = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+# The adapter needs hyper for TYPES only — `Request`, `Response`,
+# `body::Incoming`, `service::Service`, `body::Bytes` — every one of them
+# outside hyper's feature gates, so the member line adds no features to
+# the workspace entry's empty default.
+hyper = { workspace = true }
+# `Full` for response bodies and `BodyExt::frame` for the refusal drain.
+http-body-util = { workspace = true }
+# REGULAR, not dev-only: the drain calls `tokio::time::timeout` in library
+# code, so a dev-only tokio would not compile the lib at all.
+# `rt-multi-thread`, `signal` and `net` are the binary's — `main` builds its
+# own runtime, registers the SIGTERM/SIGINT trigger and binds the listener.
+# NO `macros`: `#[tokio::main]` is not used. The EFFECTIVE set is larger
+# than this line (the workspace entry adds `rt` and `macros`, and a member
+# cannot subtract them); this line is what the binary needs.
+# `sync` is for the verify-concurrency permit: an `Arc<Semaphore>`
+# shared across the per-connection service clones. It arrives through
+# feature unification anyway (object_store's reqwest chain enables it),
+# and that is exactly why it is declared — a unification that stopped
+# would take a lib-code dependency down with it.
+tokio = { workspace = true, features = ["rt-multi-thread", "signal", "net", "time", "sync"] }
+# REGULAR, not dev-only: `serve.rs` is library code calling
+# `granary_net::accept::serve` with an `Arc<rustls::ServerConfig>`, so
+# neither can be dev-only. The loopback battery drives the same SHIPPED
+# accept path — `serve` and `server_tls_config` — rather than a TLS stack
+# assembled in the test, which is what makes it evidence about the server
+# that ships. The dependency runs AGPL -> Apache, the direction the
+# boundary permits.
+granary-net = { path = "../granary-net" }
+rustls = { workspace = true }
+# The certificate chain and the key arrive as PEM PATHS, and this is the
+# crate that reads them (`std` is the file-reading half of its surface).
+# The chain MUST go through `pem_file_iter`: `from_pem_file` on a
+# multi-certificate file succeeds and yields ONE certificate, silently
+# dropping every intermediate.
+rustls-pki-types = { workspace = true, features = ["std"] }
+# The wire-snapshot temp file's create/open needs
+# `O_NOFOLLOW` (a kernel interface — dependency-policy rule 1's own
+# category), which `std::os::unix::fs::OpenOptionsExt::custom_flags` takes
+# as a raw platform-specific flag value with no portable std constant.
+# ZERO new packages: `libc` is already `=0.2.189` in the lock via
+# `granary-client` (itself via the permitted `cpufeatures` → `libc` edge) —
+# this adds a direct edge from a crate that did not have one, not a new
+# node. `default-features = false` matches the workspace entry and
+# `granary-client`'s own line verbatim.
+libc = { workspace = true }
+# The enrollment directory's descriptor walk and the verbs' file mechanics
+# (`protected_dir`, `enrollment`) need kernel interfaces std lacks: the
+# `*at` family (`openat`, `fstatat`, `renameat`, `unlinkat`), `fstatfs`,
+# `flock`, `fchown` and `geteuid`. Reaching them through `libc` would need
+# `unsafe`, which the workspace lint table forbids; nix wraps each one
+# safely. ZERO new packages: `nix` is already `=0.31.3` in the lock via
+# `fuser`, and `granary-fuse` and `granary-conformance` declare it. `fuser`
+# already enables `fs` and `user` in the workspace graph. `dir` is the one
+# feature this line adds: `fdopendir`/`readdir` on a held descriptor, so
+# the authority's log adapter can tell its held state directory empty from
+# occupied without naming it by path. It is `nix`'s own module over `fs`:
+# no new package, no build-time code.
+# `time`: the grant clock projects startup UTC through suspend-inclusive
+# CLOCK_BOOTTIME. nix's safe wrapper adds no package or build-time edge.
+nix = { workspace = true, features = ["dir", "fs", "user", "time"] }
+
+[dev-dependencies]
+# The loopback object-store test wrapper implements the backend's Stream methods.
+futures-core = { workspace = true }
+# Declared HERE rather than inherited through granary-net's feature
+# unification, so a feature change in that crate cannot silently break
+# this crate's tests. The drain tests need a real runtime; the loopback
+# clients need net and io. `io-std` is the deadline-exit process test's shutdown
+# trigger — the child reads its own stdin to EOF — and it is DEV so that a
+# test-only trigger cannot grow the production feature list; production's
+# trigger is the signal pair. `test-util` drives cancellation deadlines
+# with paused time; the traffic buckets use their injected Clock instead.
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "test-util"] }
+tokio-rustls = { workspace = true }
+rcgen = { workspace = true }      # in-test CA and leaf; no private key on disk
+h2 = { workspace = true }         # the h2-leg client: arbitrary `:path`, duplicate field lines
+# `signal`: the mounted re-exec timeout asks its child to clean up before
+# escalating. DEV, so a test-only signal cannot grow the production feature
+# list; nix's safe wrapper adds no package or build-time edge.
+nix = { workspace = true, features = ["signal"] }
+# The CONFORMANCE-OVER-HTTP edge, and it runs the direction the boundary
+# permits: AGPL test target -> Apache library. `check-licence-boundary.sh`
+# check 2 refuses `granary-server` in any manifest but this crate's own —
+# dev-dependencies and a `package =` rename included — so the reverse
+# edge is refused and the run lives on the server's side of it.
+# Nothing here reaches the lib or the bin: `conformance_http` is
+# `#[cfg(test)]`, so a `cargo build` of the server compiles none of it.
+#
+# ZERO new packages, and that is checkable rather than asserted:
+# granary-client is already a workspace member, so every crate in its graph
+# is already in the lock. `cargo tree -p granary-server -e dev -i
+# granary-client` is the proof, and the lock count is the same 310 before
+# and after.
+granary-client = { path = "../granary-client" }
+# The mounted authority harness composes the Apache FUSE adapter from this
+# AGPL test target, the licence-boundary direction the gate permits. This adds
+# no package: granary-fuse is already in the server's dev graph through
+# granary-client, and `cargo tree -p granary-server -e normal,build,dev` gains
+# only this direct line. It also enables no new build-time code.
+granary-fuse = { path = "../granary-fuse" }
+# The same harness names the mount's attribute policy, which granary-fuse does
+# not re-export. Same direction and the same proof: granary-vfs is already in
+# the server's dev graph through granary-client, so no package is added and no
+# build-time code.
+granary-vfs = { path = "../granary-vfs" }
+# The simulator drives the authority engine in this crate's tests: its
+# crash-consistency `DecisionLog` fake, which records every ordering
+# violation, and its seeded scheduler. Dev-only, and the direction the
+# boundary permits (AGPL test target -> Apache library); the reverse edge
+# is refused by `check-licence-boundary.sh`. ZERO new packages: granary-sim
+# is a workspace member whose graph (granary-core, granary-client,
+# granary-store) the lock already holds; `cargo tree -p granary-server -e
+# dev -i granary-sim` is the proof, and the lock count is unchanged.
+granary-sim = { path = "../granary-sim" }
+
+# `crash-points`: the authority's crash sites (`authority::crash`), for the
+# SIGKILL crash harness, which kills a test process at each one. Off by
+# default; `[]` pulls no dependency and enables no other feature. Every item
+# it gates is behind `#[cfg(feature = "crash-points")]`, and the macro that
+# marks a site expands to nothing without it. `lib.rs` carries a
+# `compile_error!` wall refusing it in a release profile, at the strength
+# that file states.
+[features]
+# Selects integration tests only. This feature stays empty: its instrumented
+# gran binary is built separately, so dev-feature unification cannot put its
+# client instrumentation in the shipping gran graph.
+publish-restart-tests = []
+# Opt-in mounted integration instrumentation, built in an isolated invocation
+# and target directory. The client's release wall refuses it without debug
+# assertions, and check-overlay-fault-exclusion.py refuses its arming symbols
+# in shipping artifacts while checking the snapshot accessor's source gate.
+overlay-fault-tests = ["granary-client/overlay-fault-tests"]
+crash-points = []
+
+[lints]
+workspace = true

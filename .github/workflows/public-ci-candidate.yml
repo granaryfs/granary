@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+name: public CI candidate
+on:
+  workflow_call:
+permissions: {}
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: require the candidate ref
+        shell: bash
+        env:
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'invalid candidate SHA' >&2; exit 1; }
+          case "$GITHUB_EVENT_NAME" in
+            pull_request)
+              [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo 'invalid PR number' >&2; exit 1; }
+              [ "$GITHUB_REF" = "refs/pull/$PR_NUMBER/merge" ] || { echo 'PR merge ref required' >&2; exit 1; }
+              ;;
+            push|schedule)
+              [ "$GITHUB_REF" = refs/heads/main ] || { echo 'main ref required' >&2; exit 1; }
+              ;;
+            workflow_dispatch)
+              [[ "$GITHUB_REF" == refs/heads/?* ]] || { echo 'branch ref required' >&2; exit 1; }
+              ;;
+            *) echo 'unsupported candidate event' >&2; exit 1 ;;
+          esac
+          printf 'candidate ref=%s sha=%s\n' "$GITHUB_REF" "$GITHUB_SHA"

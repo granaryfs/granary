@@ -1,0 +1,14 @@
+# W2 pins. PostgreSQL, built twice with the reproducibility recipe below.
+# repo   https://git.postgresql.org/git/postgresql.git
+# FULL 40-hex object ids. A 7-hex prefix is cheap to collide, and the ids
+# are fetched from the same remote whose code is then built, so a prefix
+# is not a pin.
+# older  cce7587<...> (full id below)
+# newer  1416f30<...> (full id below; 3 files, 28 insertions)
+# recipe ZERO_AR_DATE=1; identical absolute build path and --prefix for both
+#        commits (DESTDIR separates the install trees); NO -ffile-prefix-map
+#        (PostgreSQL embeds CONFIGURE_ARGS verbatim); -no_uuid NOT used
+#        (LC_UUID is content-derived on modern ld64).
+# configure flags are part of the dataset definition; see build-w2.sh
+cce758797f75c19080801ddad213f46d7900ec2b
+1416f304d2c9514fe65f112514accc9b653902ad

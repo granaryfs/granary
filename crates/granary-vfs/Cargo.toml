@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "granary-vfs"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "portable manifest-reading engine: snapshot indexing, grain reads, attribute construction, inode/handle tables (no_std, no adapter surface)"
+
+[dependencies]
+granary-core = { path = "../granary-core" }
+
+[lints]
+workspace = true

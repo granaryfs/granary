@@ -1,0 +1,217 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+# Own workspace ([workspace] below): libfuzzer-sys + cc must never enter
+# the parent lockfile/graph. Own Cargo.lock, committed.
+
+[package]
+name = "granary-core-fuzz"
+version = "0.0.0"
+publish = false
+# Stated so `cargo deny check licenses` can read it: these crates ARE
+# Apache-2.0 (the SPDX header above, and LICENSES/ via REUSE), but a
+# `publish = false` package with no `license` field reports as
+# `unlicensed` and failed the gate that never looked here.
+license = "Apache-2.0"
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+
+[dependencies.granary-core]
+path = ".."
+
+[[bin]]
+name = "thresh_chunk"
+path = "fuzz_targets/thresh_chunk.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "grainid_decode"
+path = "fuzz_targets/grainid_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifest_decode"
+path = "fuzz_targets/manifest_decode.rs"
+test = false
+doc = false
+bench = false
+
+# Use independent workspace for fuzzers
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "mount_control_decode"
+path = "fuzz_targets/mount_control_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bin_decode"
+path = "fuzz_targets/bin_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "binmap_decode"
+path = "fuzz_targets/binmap_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "root_decode"
+path = "fuzz_targets/root_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sheaf_decode"
+path = "fuzz_targets/sheaf_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cacheindex_decode"
+path = "fuzz_targets/cacheindex_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifest_walk"
+path = "fuzz_targets/manifest_walk.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "authlog_classify"
+path = "fuzz_targets/authlog_classify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "runmarker_decode"
+path = "fuzz_targets/runmarker_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "enrollment_decode"
+path = "fuzz_targets/enrollment_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "debug_grant_decode"
+path = "fuzz_targets/debug_grant_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "authority_answer_decode"
+path = "fuzz_targets/authority_answer_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "intent_decode"
+path = "fuzz_targets/intent_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "retained_submission_decode"
+path = "fuzz_targets/retained_submission_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "archive_name"
+path = "fuzz_targets/archive_name.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "support_snapshot_decode"
+path = "fuzz_targets/support_snapshot_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "support_configuration_decode"
+path = "fuzz_targets/support_configuration_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "support_bundle_decode"
+path = "fuzz_targets/support_bundle_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "support_trigger_decode"
+path = "fuzz_targets/support_trigger_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "support_manifest_decode"
+path = "fuzz_targets/support_manifest_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "support_archive_decode"
+path = "fuzz_targets/support_archive_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "overlay_journal_decode"
+path = "fuzz_targets/overlay_journal_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "overlay_ownership_decode"
+path = "fuzz_targets/overlay_ownership_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "overlay_discard_decode"
+path = "fuzz_targets/overlay_discard_decode.rs"
+test = false
+doc = false
+bench = false

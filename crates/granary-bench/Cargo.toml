@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "granary-bench"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "dedup benchmark harness (unpublished)"
+
+[dependencies]
+# The harness is a binary + library: core (chunker, hash, manifest
+# encoder) and the pinned chunker are RUNTIME deps here, not dev.
+granary-core = { path = "../granary-core" }
+zstd = { workspace = true }
+fastcdc = { workspace = true }
+
+[dev-dependencies]
+# Heavy test/bench deps live HERE, never in granary-core: the purity
+# gate walks dev edges (dependency-policy rule-6 memos).
+# granary-core is a [dependencies] edge, not dev-only — the harness binary and
+# library consume it, not only tests (cargo-shear).
+criterion = { workspace = true }
+proptest = { workspace = true }
+
+[[bin]]
+name = "granary-bench"
+# `src/bin/<name>/main.rs`, NOT `src/bin/<name>.rs`, because this bin has
+# out-of-line test modules. A bin FILE is a crate root, so its
+# children resolve beside it in `src/bin/` — where Cargo's own `src/bin/*.rs`
+# autodiscovery then claims each one as a further undeclared binary. The
+# directory form is Cargo's documented answer: children live in
+# `src/bin/granary-bench/`, named for what they belong to, and autodiscovery
+# stays ON. The alternative (`autobins = false`) works but silently stops any
+# future `src/bin/foo.rs` from becoming a binary at all.
+path = "src/bin/granary-bench/main.rs"
+
+[[bench]]
+name = "thresh_throughput"
+harness = false
+
+[lints]
+workspace = true
