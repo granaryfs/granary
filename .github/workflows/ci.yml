@@ -149,7 +149,7 @@ jobs:
       - uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
         if: ${{ !cancelled() && steps.workspace-guard.outcome == 'success' }}
         timeout-minutes: 5
-        with: { advanced-security: false }
+        with: { advanced-security: false, version: '1.32.0' }
       # K2's local leg as a per-merge gate: the pinned portable MinIO
       # binary (SHA-verified by the harness every run), cached by release
       # string.
@@ -1720,7 +1720,7 @@ jobs:
       - name: no server may survive this job
         if: always()
         run: python3 -I scripts/check-server-processes.py check --cleanup --state "$RUNNER_TEMP/server-processes.json"
-  candidate-identity:
+  candidate-identity: # zizmor: ignore[self-repository] same-commit workflow, pending actionlint support for $/
     permissions: {}
     uses: ./.github/workflows/public-ci-candidate.yml
   ci-green:                       # Required fan-in: failures and skipped workers refuse.
