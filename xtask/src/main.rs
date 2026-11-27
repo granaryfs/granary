@@ -6,7 +6,8 @@ use std::io::ErrorKind;
 use std::path::Path;
 use std::process::{Command, exit};
 
-const USAGE: &str = "Usage: cargo xtask <task>\nTasks: check  check-full  --help";
+const USAGE: &str =
+    "Usage: cargo run --quiet --locked --package xtask -- <task>\nTasks: check  check-full  --help";
 
 fn cargo(root: &Path, args: &[&str]) {
     let status = Command::new("cargo")

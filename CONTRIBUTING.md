@@ -14,7 +14,7 @@ in [rust-toolchain.toml](rust-toolchain.toml). Install `cargo-nextest` as well.
 From the repository root or a workspace member, run:
 
 ```sh
-cargo xtask check
+cargo run --quiet --locked --package xtask -- check
 ```
 
 This checks workspace formatting and Clippy lints, then runs the portable
@@ -24,7 +24,7 @@ For the same formatting and lint checks followed by workspace tests and
 documentation tests, run:
 
 ```sh
-cargo xtask check-full
+cargo run --quiet --locked --package xtask -- check-full
 ```
 
 Use the [Linux mount test instructions](docs/dev-environment.md) for FUSE

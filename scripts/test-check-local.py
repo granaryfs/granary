@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Exercise the real Cargo alias and isolate the driver's child commands."""
+"""Exercise the real Cargo invocation and isolate the driver's child commands."""
 
 import json
 import os
@@ -15,6 +15,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECK = ROOT / 'scripts' / 'check-local.sh'
+XTASK = ['run', '--quiet', '--locked', '--package', 'xtask', '--']
 FMT = ['fmt', '--check']
 CLIPPY = ['clippy', '--workspace', '--all-targets', '--locked']
 NEXTEST = ['nextest', 'run', '--profile', 'ci', '--locked', '--retries', '0',
@@ -32,15 +33,17 @@ def member(root, env):
                 if p['name'] == 'granary-core')
 
 
-class AliasTests(unittest.TestCase):
-    def test_real_alias_help(self):
+class CargoHelpTests(unittest.TestCase):
+    def test_real_cargo_help(self):
+        usage = 'Usage: cargo ' + ' '.join(XTASK) + ' <task>'
         with TemporaryDirectory() as target:
             env = dict(os.environ, CARGO_TARGET_DIR=target)
             for cwd in (ROOT, member(ROOT, env)):
                 with self.subTest(cwd=cwd):
-                    result = subprocess.run(['cargo', 'xtask', '--help'], cwd=cwd,
+                    result = subprocess.run(['cargo', *XTASK, '--help'], cwd=cwd,
                                             env=env, capture_output=True, text=True)
                     self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn(usage, result.stdout.splitlines())
                     for task in ('check', 'check-full'):
                         self.assertIn(task, (result.stdout + result.stderr).split())
 
@@ -114,25 +117,35 @@ fn main() {
                 self.assertEqual(warnings, 'deny')
 
 
-class AliasFailureTests(ProbeCase):
-    def invoke_alias(self, task, **env):
+class CargoRunTests(ProbeCase):
+    def invoke_task(self, task, cwd=ROOT, **env):
         original_path = os.environ.get('PATH', os.defpath)
         cargo = shutil.which('cargo', path=original_path)
         self.assertIsNotNone(cargo, 'real Cargo is required')
         return self.invoke(
-            [os.path.abspath(cargo), 'xtask', task], ROOT,
+            [os.path.abspath(cargo), *XTASK, task], cwd,
             PATH=str(self.bin) + os.pathsep + original_path,
             CARGO_TARGET_DIR=str(self.temp / 'target'), **env,
         )
 
-    def test_real_alias_failure_code(self):
-        result = self.invoke_alias('check', FAIL_STEP='clippy')
+    def test_real_check_from_root(self):
+        result = self.invoke_task('check')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_calls(QUICK, ROOT)
+
+    def test_real_check_full_from_member(self):
+        result = self.invoke_task('check-full', cwd=member(ROOT, os.environ))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_calls(FULL, ROOT)
+
+    def test_real_cargo_failure_code(self):
+        result = self.invoke_task('check', FAIL_STEP='clippy')
         self.assertEqual(result.returncode, 23, result.stderr)
         self.assert_calls(QUICK[:2], ROOT)
 
     @unittest.skipUnless(os.name == 'posix', 'Unix child termination')
-    def test_real_alias_signalled_child(self):
-        result = self.invoke_alias('check-full', SIGNAL_STEP='clippy')
+    def test_real_cargo_signalled_child(self):
+        result = self.invoke_task('check-full', SIGNAL_STEP='clippy')
         self.assertEqual(result.returncode, 143, result.stderr)
         self.assert_calls(FULL[:2], ROOT)
 
@@ -197,10 +210,10 @@ class DriverTests(ProbeCase):
 @unittest.skipUnless(os.name == 'posix' and Path('/bin/bash').is_file(), 'requires Bash')
 class ShimTests(ProbeCase):
     def test_delegates_from_repo(self):
-        result = self.invoke(['/bin/bash', CHECK], self.scratch, FAIL_STEP='xtask',
+        result = self.invoke(['/bin/bash', CHECK], self.scratch, FAIL_STEP='run',
                              PATH=str(self.bin) + os.pathsep + os.defpath)
         self.assertEqual(result.returncode, 23, result.stderr)
-        self.assert_calls([['xtask', 'check']], ROOT)
+        self.assert_calls([XTASK + ['check']], ROOT)
 
     def test_historical_no_cargo_error(self):
         result = self.invoke(['/bin/bash', CHECK], self.scratch, PATH=str(self.scratch))

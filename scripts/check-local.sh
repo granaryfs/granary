@@ -17,4 +17,4 @@ fi
 script=${BASH_SOURCE[0]}
 [[ $script == */* ]] || script=./$script
 CDPATH='' cd -- "${script%/*}/.."
-exec cargo xtask check
+exec cargo run --quiet --locked --package xtask -- check
