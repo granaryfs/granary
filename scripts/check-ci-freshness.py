@@ -493,7 +493,7 @@ def public_self_test(workers):
                 ("missing need", text.replace("needs: [lint, test,", "needs: [test,"), "worker inventory"),
                 ("extra worker", text + "  extra-worker:\n    runs-on: ubuntu-24.04\n", "worker inventory"),
                 ("explicit witness ref", text.replace("uses: ./.github/workflows/public-ci-candidate.yml", "uses: ./.github/workflows/public-ci-candidate.yml@main"), "exact relative witness"),
-                ("conditional witness", text.replace("  candidate-identity:\n", "  candidate-identity:\n    if: false\n"), "conditional worker")):
+                ("conditional witness", re.sub(r"(?m)^  candidate-identity:[^\n]*\n", r"\g<0>    if: false\n", text), "conditional worker")):
             fixture.write_text(altered)
             try:
                 inventory(fixture, workers, public=True)
