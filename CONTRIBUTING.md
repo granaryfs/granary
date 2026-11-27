@@ -27,6 +27,11 @@ documentation tests, run:
 cargo run --quiet --locked --package xtask -- check-full
 ```
 
+Use absolute directories in `PATH` for Cargo tools and wrappers. If `PATH`
+contains a relative directory, the runner uses the absolute Cargo executable
+provided by `cargo run` for its child checks, so a `PATH` wrapper may only
+handle the initial command.
+
 Use the [Linux mount test instructions](docs/dev-environment.md) for FUSE
 coverage when a change affects mounting.
 
