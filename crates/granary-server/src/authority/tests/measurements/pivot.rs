@@ -948,16 +948,36 @@ async fn authority_measurement_pivot_keeps_slow_requests_in_flight() {
     assert!(run.completed_in_window > 0, "{run:?}");
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn authority_measurement_pivot_refuses_busy_or_rate_limited_streams() {
+    #[derive(Clone, Copy)]
+    struct TestClock;
+
+    impl PivotClock for TestClock {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "read the runtime's paused clock at the PivotClock seam"
+        )]
+        fn now(&self) -> Instant {
+            tokio::time::Instant::now().into_std()
+        }
+
+        fn wait_until(
+            &self,
+            deadline: Instant,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
+            WallClock.wait_until(deadline)
+        }
+    }
+
     let issue = |_| async {
-        WallClock
-            .wait_until(super::stopwatch() + Duration::from_millis(30))
+        TestClock
+            .wait_until(TestClock.now() + Duration::from_millis(30))
             .await;
         Ok(())
     };
     let single = run_open_loop(
-        WallClock,
+        TestClock,
         4,
         OfferedRate::new(46, 1),
         1,
@@ -978,7 +998,7 @@ async fn authority_measurement_pivot_refuses_busy_or_rate_limited_streams() {
     assert_eq!(single.first_refusal.unwrap().kind, "overlap");
     assert_eq!(single.sent_count, 1, "the first overlap must stop the run");
     let rotated = run_open_loop(
-        WallClock,
+        TestClock,
         4,
         OfferedRate::new(46, 1),
         2,
@@ -993,7 +1013,7 @@ async fn authority_measurement_pivot_refuses_busy_or_rate_limited_streams() {
     );
 
     let limited = run_open_loop(
-        WallClock,
+        TestClock,
         1,
         OfferedRate::new(10, 1),
         1,
@@ -1006,7 +1026,7 @@ async fn authority_measurement_pivot_refuses_busy_or_rate_limited_streams() {
     assert_eq!(limited.rate_limited_count, 1);
 
     let conflicted = run_open_loop(
-        WallClock,
+        TestClock,
         4,
         OfferedRate::new(10, 1),
         4,
