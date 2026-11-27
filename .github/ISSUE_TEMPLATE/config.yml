@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+blank_issues_enabled: true
+contact_links:
+  - name: Report a vulnerability privately
+    url: https://github.com/granaryfs/granary/security/policy
+    about: Find the private reporting options in Granary's security policy.
