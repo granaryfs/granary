@@ -18,10 +18,23 @@ From the repository root, run:
 ```
 
 This checks workspace formatting and Clippy lints, then runs the portable
-`granary-core` and `granary-vfs` test suites. Run
-`cargo nextest run --profile ci --locked` for the full workspace suite. Use
-the [Linux mount test instructions](docs/dev-environment.md) for FUSE coverage
-when a change affects mounting.
+`granary-core` and `granary-vfs` test suites. Run both commands below for
+the workspace tests and documentation tests.
+
+```sh
+cargo nextest run --profile ci --locked --retries 0 --no-tests fail
+cargo test --doc --locked
+```
+
+Use the [Linux mount test instructions](docs/dev-environment.md) for FUSE
+coverage when a change affects mounting.
+
+Cache and mount tests create fixtures under the system temporary directory. If
+space is tight on Linux or macOS, set `TMPDIR` to a writable local directory
+with room for the fixtures. For tests that use the real free-space check,
+leave room for each cache write plus the reserve: 5% of filesystem capacity
+(rounded down to bytes), with a 1 GiB minimum only on filesystems larger than
+1 GiB.
 
 ## Open a pull request
 
@@ -39,6 +52,33 @@ independent review and explicit maintainer approval.
 The maintainer runs the checked squash command once the required reviews cover
 the change and CI passes for the current PR head and base. The command verifies
 the evidence and final message before merging, then checks the landed commit.
+
+### Choose a change class
+
+Use the class that describes the strongest guarantee your change affects.
+
+| Class | Use for |
+| --- | --- |
+| E | Editorial changes that leave the stated claims the same. |
+| I | Internal changes or ordinary tests that preserve the public contract. |
+| P | Changes to public behavior, a documented contract, or contributor policy. |
+| S | Changes to a safety guarantee or to the checks that authorize it. |
+| R | Irreversible maintainer actions, such as publishing a release. |
+
+End the PR description with one block of trailers. Put the change class in
+`Class:`, followed by the AI credits and the applicable human sign-offs.
+The maintainer reviews the class and credits before merging.
+
+This sample PR description records how a test for existing behavior was verified.
+
+```text
+Exercise the existing refusal for an empty journal. Added a fixture
+for the empty input and ran the granary-core suite.
+
+Class: I
+Assisted-by: none
+Signed-off-by: Jamie Example <jamie@example.com>
+```
 
 ## Sign your commits
 
@@ -65,9 +105,10 @@ sign-off and keep any existing sign-offs that apply to work you carry forward.
 
 ## AI assistance and review
 
-You are responsible for the change you submit. Read and understand it, and
-disclose material AI assistance in the PR description. Credit a review only
-when its verdict covers the change as it lands.
+You are responsible for the change you submit. Read and understand it.
+Disclose material AI assistance in the `Assisted-by:` trailer. Use
+`Assisted-by: none` if there was no material assistance. Use
+`AI-Reviewed-by:` only for a review that covers the change as it lands.
 
 Maintainers may send relevant material from public PRs to external model
 providers for review. Follow the [security policy](SECURITY.md) to report a
@@ -128,3 +169,7 @@ or, in `granary-server`:
 ```
 
 The identifier is authoritative for that file.
+
+If you add or adapt third-party code, fixtures, or assets, identify the upstream
+source and version or revision in the PR. State which material you used and the
+terms that cover it. Preserve the required notices in the repository.
