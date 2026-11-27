@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
 # SPDX-License-Identifier: Apache-2.0
 
-# Run from the repository root.
 set -eu
 
 if ! command -v cargo >/dev/null 2>&1; then
@@ -10,7 +9,12 @@ if ! command -v cargo >/dev/null 2>&1; then
     exit 127
 fi
 
-export CARGO_BUILD_WARNINGS=deny
-cargo fmt --check
-cargo clippy --workspace --all-targets --locked
-cargo nextest run --profile ci --locked -p granary-core -p granary-vfs
+if (( $# != 0 )); then
+    printf 'Unexpected argument: %s\nUsage: check-local.sh\n' "$1" >&2
+    exit 2
+fi
+
+script=${BASH_SOURCE[0]}
+[[ $script == */* ]] || script=./$script
+CDPATH='' cd -- "${script%/*}/.."
+exec cargo xtask check

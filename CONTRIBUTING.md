@@ -11,19 +11,20 @@ on it.
 
 Install Rust with rustup, with `rustfmt` and `clippy` for the toolchain pinned
 in [rust-toolchain.toml](rust-toolchain.toml). Install `cargo-nextest` as well.
-From the repository root, run:
+From the repository root or a workspace member, run:
 
 ```sh
-./scripts/check-local.sh
+cargo xtask check
 ```
 
 This checks workspace formatting and Clippy lints, then runs the portable
-`granary-core` and `granary-vfs` test suites. Run both commands below for
-the workspace tests and documentation tests.
+`granary-core` and `granary-vfs` test suites. From the root,
+`./scripts/check-local.sh` remains a no-argument shortcut for this check.
+For the same formatting and lint checks followed by workspace tests and
+documentation tests, run:
 
 ```sh
-cargo nextest run --profile ci --locked --retries 0 --no-tests fail
-cargo test --doc --locked
+cargo xtask check-full
 ```
 
 Use the [Linux mount test instructions](docs/dev-environment.md) for FUSE

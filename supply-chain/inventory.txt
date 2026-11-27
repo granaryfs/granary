@@ -275,6 +275,7 @@ windows-sys v0.61.2
 winnow v1.0.4
 wit-bindgen v0.57.1
 writeable v0.6.4
+xtask v0.1.0
 yasna v0.6.0
 yoke v0.8.3
 yoke-derive v0.8.2 (proc-macro)
