@@ -54,6 +54,7 @@ against a hostile fork is the owner's fork-approval setting, which no file in
 the tree can hold.
 """
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -222,7 +223,7 @@ def check_job(job, body, name):
                      f" ({runner or 'no runs-on'}) without the fork guard `if: {GUARD}`")
 
 
-def check_workflow(name, text, public=False):
+def check_workflow(name, text, public=False, path=None, raw=None):
     """Refuse a rule breach with ValueError; return (jobs, own-runner jobs)."""
     lines = uncommented(text)
     if any("pull_request_target" in line for line in lines):
@@ -248,7 +249,14 @@ def check_workflow(name, text, public=False):
     if "ci-green" in blocks and any(re.match(r"defaults:", line) for line in lines):
         raise ValueError(f"{name}: a workflow-level `defaults:` could let ci-green's refusal step fail softly")
     if public:
-        check_public(name, preamble, on, blocks, lines)
+        canary = False
+        if path is not None and Path(path) == CANARY_WORKFLOW:
+            if Path(path).is_symlink() or not Path(path).is_file():
+                raise ValueError(f"{name}: canary workflow must be a regular file")
+            if hashlib.sha256(raw if raw is not None else text.encode("utf-8")).hexdigest() != CANARY_SHA256:
+                raise ValueError(f"{name}: canary workflow differs from reviewed bytes")
+            canary = True
+        check_public(name, preamble, on, blocks, lines, canary=canary)
         return len(blocks), 0
     own = 0
     for job, body in blocks.items():
@@ -266,9 +274,11 @@ def check_workflow(name, text, public=False):
 
 PUBLIC_HOSTED = {"ubuntu-24.04", "macos-26", "macos-15"}
 CANDIDATE_WORKFLOW = "./.github/workflows/public-ci-candidate.yml"
+CANARY_WORKFLOW = Path(__file__).resolve().parent.parent / ".github/workflows/ready-pr-metadata-canary.yml"
+CANARY_SHA256 = "2a6ef4cb4672c31f0c48861288c8b873a78210e667a0c511d73f6494aef0d61f"
 
 
-def public_permissions(body, indent):
+def public_permissions(body, indent, canary=False):
     declarations = [i for i, line in enumerate(body) if re.match(" " * indent + r"permissions:", line)]
     if len(declarations) != 1:
         raise ValueError("public permissions must be explicit and read-only")
@@ -286,6 +296,8 @@ def public_permissions(body, indent):
             fields.append(line.strip())
     else:
         fields = []
+    if canary and fields == ["contents: read", "pull-requests: read"]:
+        return
     if (not fields or len(fields) != len(set(fields))
             or any(not re.fullmatch(r"(?:actions|contents): read", field) for field in fields)):
         raise ValueError("public permissions must be explicit and read-only")
@@ -457,7 +469,7 @@ def public_bare_if(raw):
     public_expression(raw)
 
 
-def check_public(name, preamble, on, blocks, lines):
+def check_public(name, preamble, on, blocks, lines, canary=False):
     header = public_mapping(preamble, 0)
     sensitive = bool(on & {"pull_request", "workflow_call"})
     if sensitive:
@@ -479,7 +491,7 @@ def check_public(name, preamble, on, blocks, lines):
         if sensitive:
             public_context_scalars(parsed)
             public_bare_if(parsed.get("if"))
-        public_permissions(body, 4)
+        public_permissions(body, 4, canary=canary and job == "sample")
         if any(re.match(r"    (?:continue-on-error|defaults):", line) for line in body):
             raise ValueError("public jobs cannot soften failures or override the shell")
         if job == "candidate-identity":
@@ -686,6 +698,39 @@ jobs:
         raise RuntimeError(f"public guard controls missing: {cases}")
     print(f"public fork guard self-test: {cases}/{cases} fixture controls passed")
     witness_self_test()
+    canary_self_test()
+
+
+def canary_self_test():
+    """The reviewed-byte pin refuses any changed workflow or copied path."""
+    text = CANARY_WORKFLOW.read_text()
+    check_workflow(CANARY_WORKFLOW.name, text, public=True, path=CANARY_WORKFLOW)
+    changes = (
+        ("extra byte", text + "\n"),
+        ("dispatch", text.replace("  schedule:", "  workflow_dispatch:", 1)),
+        ("wider permission", text.replace("pull-requests: read", "pull-requests: write", 1)),
+        ("new step", text.replace("      - name: Sample ready PR metadata",
+                                   "      - run: echo extra\n      - name: Sample ready PR metadata", 1)),
+        ("different token", text.replace("GITHUB_TOKEN: ${{ github.token }}",
+                                          "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}", 1)),
+        ("head checkout", text.replace("ref: ${{ github.sha }}",
+                                        "ref: ${{ github.event.pull_request.head.sha }}", 1)),
+    )
+    for label, changed in changes:
+        if changed == text:
+            raise RuntimeError(f"canary {label}: mutation did not change workflow")
+        try:
+            check_workflow(CANARY_WORKFLOW.name, changed, public=True, path=CANARY_WORKFLOW)
+        except ValueError:
+            print(f"public fork guard self-test: canary byte change ({label}) refused PASS")
+        else:
+            raise RuntimeError(f"canary {label}: accepted changed workflow")
+    try:
+        check_workflow("other.yml", text, public=True, path=CANARY_WORKFLOW.with_name("other.yml"))
+    except ValueError:
+        print("public fork guard self-test: canary copied path refused PASS")
+    else:
+        raise RuntimeError("canary copied path accepted")
 
 
 
@@ -730,7 +775,10 @@ def check_tree(root, public=False):
         raise ValueError(f"no workflow files under {root}")
     total = own = 0
     for path in files:
-        jobs_, own_ = check_workflow(path.name, path.read_text(), public)
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"{path.name}: workflow must be a regular file")
+        raw = path.read_bytes()
+        jobs_, own_ = check_workflow(path.name, raw.decode("utf-8"), public, path=path, raw=raw)
         total += jobs_
         own += own_
     if not public and not own:
