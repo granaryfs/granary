@@ -3,7 +3,7 @@
 name: pr-metadata
 on:
   pull_request:
-    types: [opened, reopened, synchronize, edited]
+    types: [opened, reopened, synchronize, edited, ready_for_review, converted_to_draft]
 permissions: {}
 concurrency:
   group: pr-metadata-${{ github.event.pull_request.number }}

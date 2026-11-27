@@ -6,12 +6,14 @@
 import argparse
 from dataclasses import dataclass
 from hashlib import sha256
+from html import unescape
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+import unicodedata
 
 
 SIGNOFF = "signed-off-by"
@@ -27,6 +29,29 @@ SIGNOFF_EXAMPLE = re.compile(
     """,
     re.MULTILINE | re.DOTALL | re.VERBOSE,
 )
+# Ready descriptions are Markdown; keep the landed-message masker independent.
+CODE_SPAN = r"(?<!`)(?P<ticks>`+)(?!`)[^\n]*?(?<!`)(?P=ticks)(?!`)"
+READY_REGION = re.compile(
+    r"^[ ]{0,3}(`{3,})[^`\n]*\n.*?(?:^[ ]{0,3}\1`*[ \t]*$|\Z)"
+    r"|^[ ]{0,3}(~{3,})[^\n]*\n.*?(?:^[ ]{0,3}\2~*[ \t]*$|\Z)"
+    r"|^[ ]{0,3}<(?:pre|script|style|textarea)(?=[ \t>]|$).*?"
+    r"(?:</(?:pre|script|style|textarea)>[^\n]*|\Z)"
+    r"|^[ ]{0,3}<!--.*?(?:-->[^\n]*|\Z)"
+    r"|^[ ]{0,3}<\?.*?(?:\?>[^\n]*|\Z)"
+    r"|^[ ]{0,3}<!(?-i:[A-Z]).*?(?:>[^\n]*|\Z)"
+    r"|^[ ]{0,3}<!\[(?-i:CDATA)\[.*?(?:\]\]>[^\n]*|\Z)"
+    r"|<!--.*?-->"
+    r"|" + CODE_SPAN, re.MULTILINE | re.DOTALL | re.IGNORECASE | re.ASCII,
+)
+
+
+# Match tags, not every angle-bracketed string (e.g. an email autolink).
+INLINE_LINK = (
+    r"!?\[(?P<label>[^\[\]\n]*)\]\("
+    r"(?:<[^<>\r\n]*>|(?:[^()<>\s]|\([^()\s]*\))*)"
+    r'''(?:[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\)))?\)'''
+)
+VALUE_TOKEN = re.compile(CODE_SPAN + r"|" + INLINE_LINK + r"|</?[A-Za-z][A-Za-z0-9-]*(?:[ \t](?:[^'\"<>]|'[^']*'|\"[^\"]*\")*)? */?>")
 TRAILER_LINE = re.compile(r"[a-zA-Z0-9-]+[ \t]*:.*")
 OID = re.compile(r"[0-9a-f]{40}")
 APPROVAL_FIELDS = {"base", "head", "tested_merge", "tree", "author", "message_sha256"}
@@ -82,14 +107,65 @@ def check_trailers(message, *, check_ai=True):
     return signoffs
 
 
+def mask_examples(message):
+    return SIGNOFF_EXAMPLE.sub(lambda match: re.sub(r"[^ \t\n]", "\0", match[0]), message)
+
+
+def ready_region(match):
+    if match['ticks']:
+        return match[0]  # Literal text, not an HTML opener.
+    return re.sub(r"[^ \t\n]", "\0", match[0])
+
+
+def visible_assistance(value):
+    def visible(text):
+        # These four default-ignorable Hangul fillers fall outside categories C and M.
+        return any(not c.isspace() and unicodedata.category(c)[0] not in 'CM'
+                   and c not in '\u115f\u1160\u3164\uffa0' for c in text)
+
+    end = 0
+    for token in VALUE_TOKEN.finditer(value):
+        if visible(unescape(value[end:token.start()])):
+            return True
+        if token['label'] and visible(unescape(token['label'])):
+            return True
+        if token['ticks'] and visible(token[0].strip('`')):
+            return True
+        end = token.end()
+    return visible(unescape(value[end:]))
+
+
+def check_ready_trailers(body):
+    classes = []
+    assistance = []
+    for line in terminal_lines(READY_REGION.sub(ready_region, body)):
+        if "\0" in line or not TRAILER_LINE.fullmatch(line):
+            raise ValueError("ready PR must end with a standalone trailer block")
+        key, value = trailer_parts(line)
+        if key == "class":
+            classes.append(value)
+        elif key == "assisted-by":
+            assistance.append(value)
+    if len(classes) != 1 or classes[0] not in {"E", "I", "P", "S", "R"}:
+        raise ValueError("ready PR requires exactly one Class trailer with value E/I/P/S/R")
+    if len(assistance) != 1 or not visible_assistance(assistance[0]):
+        raise ValueError("ready PR requires exactly one nonempty Assisted-by trailer")
+
+
 def check_draft(event_path):
     event = json.loads(read_utf8(event_path))
     pr = event.get("pull_request") if isinstance(event, dict) else None
     if not isinstance(pr, dict):
         raise ValueError("event has no pull request object")
+    draft = pr.get("draft", True)
+    if not isinstance(draft, bool):
+        raise ValueError("draft flag must be a boolean")
     title, body = pr.get("title"), pr.get("body")
     check_title(title)
     check_description(body)
+    if not draft:
+        body = body.replace("\r\n", "\n").replace("\r", "\n")
+        check_ready_trailers(body)
     visible_body = HTML_COMMENT.sub("", body).replace("\r\n", "\n")
     # A draft can end in a Markdown example that Git's trailer heuristic
     # would treat as sign-offs. Check only a standalone trailer paragraph.
@@ -112,7 +188,7 @@ def raw_signoffs(message, *, check_ai=True):
     parsed = check_trailers(message, check_ai=check_ai)
     # Git can parse trailer-shaped text inside comments and fenced examples.
     # Mask those characters without changing line and paragraph boundaries.
-    visible = SIGNOFF_EXAMPLE.sub(lambda match: re.sub(r"[^ \t\n]", "\0", match[0]), message)
+    visible = mask_examples(message)
     for line in terminal_lines(visible):
         key, value = trailer_parts(line)
         if key == SIGNOFF and "\0" not in line and value in parsed:
