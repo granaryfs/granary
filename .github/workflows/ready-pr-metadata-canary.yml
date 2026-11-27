@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+name: ready-pr-metadata-canary
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+permissions: {}
+concurrency:
+  group: ready-pr-metadata-canary
+  cancel-in-progress: false
+jobs:
+  sample:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: { contents: read, pull-requests: read }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install pinned Markdown parser
+        run: |
+          set -euo pipefail
+          python3 -I -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3, 12) else 1)'
+          python3 -m venv "$RUNNER_TEMP/ready-pr-canary-venv"
+          "$RUNNER_TEMP/ready-pr-canary-venv/bin/python" -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r scripts/ready-pr-metadata-requirements.txt
+      - name: Sample ready PR metadata
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          venv_python="$RUNNER_TEMP/ready-pr-canary-venv/bin/python"
+          private="$(mktemp -d "$RUNNER_TEMP/ready-pr-canary.XXXXXX")"
+          private="$(cd "$private" && pwd -P)"
+          python3 -I -c 'import pathlib, stat, sys; p=pathlib.Path(sys.argv[1]); parts=(p, *p.parents); good=p.is_absolute() and p.resolve(strict=True)==p and stat.S_IMODE(p.stat().st_mode)==0o700 and all(not q.is_symlink() and not q.stat().st_mode & 0o022 for q in parts); sys.exit(0 if good else 1)' "$private"
+          echo 'private canary directory provisioned: 0700 leaf, symlink-free safe ancestors; reader emits stdout only'
+          RUNNER_TEMP="$private" TMPDIR="$private" "$venv_python" -I -B scripts/run-ready-pr-canary.py
