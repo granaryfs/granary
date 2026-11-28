@@ -57,8 +57,13 @@ def _declared_workers(detector):
             or any(not isinstance(name, str) or (name != "candidate-identity / verify" and not re.fullmatch(r"[a-z][a-z0-9-]*(?: \([^()\n]+\))?", name))
                    for name in names)):
         raise ValueError("SKIPPABLE must contain check names of the form <id> or <id> (…)")
-    if len({name.split(" (")[0].split(" / ")[0] for name in names}) != len(names):
+    ids = tuple(name.split(" (")[0].split(" / ")[0] for name in names)
+    singletons = [job for job in ids if job != "test-macos"]
+    if len(set(names)) != len(names) or len(set(singletons)) != len(singletons):
         raise ValueError("SKIPPABLE must name distinct workers")
+    mac = {name for name, job in zip(names, ids) if job == "test-macos"}
+    if mac != {f"test-macos ({i})" for i in (1, 2, 3)}:
+        raise ValueError("SKIPPABLE differs from the macOS partition inventory")
     return set(names)
 
 
@@ -126,9 +131,9 @@ def inventory(workflow, workers, detector=None, public=False):
                 raise ValueError("public worker runner differs")
     for name, job in jobs.items():
         strategies = re.findall(r"""(?m)^    (?:strategy|'strategy'|"strategy") *:(.*)$""", job)
-        # Only test uses a strategy. Refuse unfamiliar forms, including inline
+        # Only the two test jobs use strategies. Refuse unfamiliar forms, including inline
         # strategies that the block-matrix parser below cannot inspect.
-        if strategies != ([""] if name == "test" else []):
+        if strategies != ([""] if name in {"test", "test-macos"} else []):
             raise ValueError("matrix inventory differs from ci.yml")
     matrices = re.findall(r"(?m)^      matrix:\n((?:        .*\n|\s*\n)+)", jobs["test"])
     if not matrices:
@@ -136,6 +141,18 @@ def inventory(workflow, workers, detector=None, public=False):
     bodies = ["".join(line.split("#")[0].strip() for line in matrix.splitlines()) for matrix in matrices]
     if bodies != ["os: [ubuntu-24.04]"]:
         raise ValueError("matrix inventory differs from ci.yml")
+    mac = jobs["test-macos"]
+    strategy = re.findall(r"(?ms)^    strategy:\n(.*?)(?=^    [^\s#]|\Z)", mac)
+    if strategy != ["      fail-fast: false\n      matrix:\n        partition: [1, 2, 3]\n"]:
+        raise ValueError("macOS matrix inventory differs from ci.yml")
+    steps = mac.split("\n      - ")[1:]
+    suites = [step.rstrip() for step in steps if "cargo nextest run" in step or "cargo test --doc" in step]
+    if suites != [
+            'run: cargo nextest run --profile ci --locked --partition "hash:$PARTITION/3" --no-tests fail\n'
+            '        env:\n'
+            '          PARTITION: ${{ matrix.partition }}',
+            "run: cargo test --doc --locked\n        if: matrix.partition == 1"]:
+        raise ValueError("macOS partition test steps differ from ci.yml")
 
 
 def full_evidence(run, jobs, now, workers):
@@ -237,6 +254,7 @@ def self_test(workers):
                          ("conclusion", "cancelled"), ("conclusion", "skipped"), ("status", "in_progress")]:
         case(f"wrong {field} {value}", lambda r, j, f=field, v=value: r.update({f: v}), False)
     case("partial inventory", lambda r, j: j.pop(), False)
+    case("missing second macOS partition", lambda r, j: j.remove(next(job for job in j if job["name"] == "test-macos (2)")), False)
     case("duplicate worker", lambda r, j: j.append(j[0]), False)
     for value in ["cancelled", "skipped"]:
         case(f"worker {value}", lambda r, j, v=value: j[0].update(conclusion=v), False)
@@ -385,8 +403,10 @@ def self_test(workers):
                 ("duplicate SKIPPABLE declarations", declaration * 2, absent),
                 ("SKIPPABLE list type", "SKIPPABLE = " + repr(list(names)), malformed),
                 ("SKIPPABLE empty tuple", "SKIPPABLE = ()", malformed),
-                ("SKIPPABLE one short", "SKIPPABLE = " + repr(names[:-1]), mismatch),
+                ("SKIPPABLE one short", "SKIPPABLE = " + repr(tuple(name for name in names if name != "lint")), mismatch),
                 ("SKIPPABLE one extra", "SKIPPABLE = " + repr(names + ("extra-worker",)), mismatch),
+                ("SKIPPABLE extra macOS partition", "SKIPPABLE = " + repr(names + ("test-macos (4)",)),
+                 "SKIPPABLE differs from the macOS partition inventory"),
                 ("SKIPPABLE duplicate names", "SKIPPABLE = " + repr((names[1],) + names[1:]), distinct),
                 ("SKIPPABLE duplicate ids", "SKIPPABLE = " + repr(names + (names[0] + " (extra)",)), distinct),
                 ("SKIPPABLE non-string name", "SKIPPABLE = " + repr((17,) + names[1:]), malformed),
@@ -458,7 +478,7 @@ def self_test(workers):
     workflow_contract(workflow, canary)
     cases += 1
     print("freshness self-test: independent full runs and hosted alarm PASS")
-    if cases != 76:
+    if cases != 78:
         raise RuntimeError(f"wrong case count {cases}")
     inventory(".github/workflows/ci.yml", workers)
     print(f"freshness self-test: {cases}/{cases} controls passed; worker inventory matches")
@@ -490,6 +510,15 @@ def public_self_test(workers):
                 ("conditional worker", text.replace("  lint:\n", "  lint:\n    if: false\n"), "conditional worker"),
                 ("private runner", text.replace("    runs-on: ubuntu-24.04", "    runs-on: [self-hosted, linux]", 1), "runner differs"),
                 ("wrong Mac image", text.replace("    runs-on: macos-26", "    runs-on: macos-15"), "runner differs"),
+                ("missing partition", text.replace("partition: [1, 2, 3]", "partition: [1, 3]"), "matrix inventory"),
+                ("fourth partition", text.replace("partition: [1, 2, 3]", "partition: [1, 2, 3, 4]"), "matrix inventory"),
+                ("duplicate partition", text.replace("partition: [1, 2, 3]", "partition: [1, 1, 3]"), "matrix inventory"),
+                ("comment before matrix exclude", text.replace(
+                    "partition: [1, 2, 3]", "partition: [1, 2, 3]\n    # comment\n        exclude:\n          - partition: 3"),
+                 "macOS matrix inventory differs from ci.yml"),
+                ("constant partition index", text.replace("PARTITION: ${{ matrix.partition }}", 'PARTITION: "1"'), "partition test steps"),
+                ("changed doctest partition", text.replace("if: matrix.partition == 1", "if: matrix.partition == 2"),
+                 "macOS partition test steps differ from ci.yml"),
                 ("missing need", text.replace("needs: [lint, test,", "needs: [test,"), "worker inventory"),
                 ("extra worker", text + "  extra-worker:\n    runs-on: ubuntu-24.04\n", "worker inventory"),
                 ("explicit witness ref", text.replace("uses: ./.github/workflows/public-ci-candidate.yml", "uses: ./.github/workflows/public-ci-candidate.yml@main"), "exact relative witness"),

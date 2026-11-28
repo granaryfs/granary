@@ -22,7 +22,8 @@ import tomllib
 MARKER = ".ci-docs-only"
 MARKER_BYTES = b"docs-only fast path: see scripts/ci-changes.py\n"
 SKIPPABLE = (
-    "lint", "test (ubuntu-24.04)", "test-macos", "candidate-identity / verify",
+    "lint", "test (ubuntu-24.04)", "test-macos (1)", "test-macos (2)", "test-macos (3)",
+    "candidate-identity / verify",
     "purity", "gates", "breakage", "crash-points", "publish-restart", "overlay-faults", "fuse",
 )
 GIT_ENV = {
@@ -141,9 +142,13 @@ def worker_ids(names=SKIPPABLE):
                    for name in names)):
         raise ValueError("SKIPPABLE must contain check names of the form <id> or <id> (…)")
     ids = tuple(name.split(" (")[0].split(" / ")[0] for name in names)
-    if len(set(ids)) != len(ids):
+    singletons = [job for job in ids if job != "test-macos"]
+    if len(set(names)) != len(names) or len(set(singletons)) != len(singletons):
         raise ValueError("SKIPPABLE must name distinct workers")
-    return ids
+    mac = {name for name, job in zip(names, ids) if job == "test-macos"}
+    if mac != {f"test-macos ({i})" for i in (1, 2, 3)}:
+        raise ValueError("SKIPPABLE differs from the macOS partition inventory")
+    return tuple(dict.fromkeys(ids))
 
 
 def commit(value, cwd=None):
@@ -245,6 +250,7 @@ def aggregate(needs):
 
 
 def self_test():
+    from runpy import run_path
     from unittest.mock import patch
 
     cases = 0
@@ -410,7 +416,11 @@ def self_test():
     check("worker tuple accepts an extra worker", refusal(worker_ids, SKIPPABLE + ("extra-worker",)), None)
     malformed = "SKIPPABLE must contain check names of the form <id> or <id> (…)"
     distinct = "SKIPPABLE must name distinct workers"
+    partitions = "SKIPPABLE differs from the macOS partition inventory"
     for label, names, diagnostic in (
+            ("missing macOS partition", tuple(name for name in SKIPPABLE if name != "test-macos (2)"), partitions),
+            ("fourth macOS partition", SKIPPABLE + ("test-macos (4)",), partitions),
+            ("duplicate macOS partition", SKIPPABLE + ("test-macos (1)",), distinct),
             ("worker tuple refuses empty", (), malformed),
             ("worker tuple refuses a list", list(SKIPPABLE), malformed),
             ("worker tuple refuses a non-string", (17,) + SKIPPABLE[1:], malformed),
@@ -449,6 +459,9 @@ def self_test():
                 raise RuntimeError("aggregate accepted invalid evidence")
     workflow = Path(__file__).resolve().parent.parent / ".github/workflows/ci.yml"
     text = workflow.read_text()
+    # Exercise the exact workflow schema on PRs too, not just in the main freshness alarm.
+    inventory = run_path(str(Path(__file__).with_name("check-ci-freshness.py")))["inventory"]
+    check("public matrix inventory", inventory(workflow, set(SKIPPABLE), detector=Path(__file__), public=True), None)
     declared_needs = re.search(r"(?m)^  ci-green:.*\n(?: +#.*\n)*    needs: \[([^\]]+)\]", text)
     if declared_needs is None:
         raise RuntimeError(f"ci-green needs fixture: got {declared_needs!r}")

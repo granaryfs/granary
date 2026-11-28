@@ -410,6 +410,13 @@ def workflow_wiring(text, expected, reap, portable=()):
         after += '--state "$RUNNER_TEMP/server-processes.json"'
         if block.count(before) != 1 or block.count(after) != 1 or block.index(before) > block.index(after):
             raise ValueError(f"missing server process lifecycle steps: {job}")
+        if job in portable:
+            # A command can still be present but skipped in one matrix leg.
+            # Match the whole step, including any fields following its run line.
+            steps = [step.rstrip() for step in block.split("\n      - ")[1:]]
+            if (f"name: record server process baseline\n        run: {before}" not in steps
+                    or f"name: no server may survive this job\n{after}" not in steps):
+                raise ValueError(f"conditional or unfamiliar server process steps: {job}")
     if any('scripts/check-server-processes.py check ' in block for job, block in blocks.items() if job not in expected | set(portable)):
         raise ValueError("server process post-step has no baseline job")
 
@@ -431,18 +438,25 @@ def workflow_self_test(public=False):
             match = re.search(r"^  " + re.escape(job) + r":[^\n]*\n", text, re.M)
             end = re.search(r"^  [a-z][a-z0-9-]*:", text[match.end():], re.M)
             limit = match.end() + end.start() if end else len(text)
-            block = text[match.start():limit].replace('        if: always()\n        run: python3 scripts/check-server-processes.py',
-                                                     '        if: success()\n        run: python3 scripts/check-server-processes.py')
-            bad = text[:match.start()] + block + text[limit:]
-            try:
-                workflow_wiring(bad, expected, reap, portable)
-            except ValueError as error:
-                if str(error) != f"missing server process lifecycle steps: {job}":
-                    raise
-                print(f"CONTROL workflow: REFUSED {error}")
-                cases += 1
-            else:
-                raise ValueError(f"missing cancellation post-step accepted: {job}")
+            block = text[match.start():limit]
+            post = '        if: always()\n        run: python3 scripts/check-server-processes.py'
+            controls = [(block.replace(post, post.replace("always()", "success()")),
+                         f"missing server process lifecycle steps: {job}")]
+            if job in portable:
+                baseline = "      - name: record server process baseline\n"
+                controls.append((block.replace(baseline, baseline + "        if: matrix.partition != 2\n"),
+                                 f"conditional or unfamiliar server process steps: {job}"))
+            for altered, diagnostic in controls:
+                bad = text[:match.start()] + altered + text[limit:]
+                try:
+                    workflow_wiring(bad, expected, reap, portable)
+                except ValueError as error:
+                    if str(error) != diagnostic:
+                        raise
+                    print(f"CONTROL workflow: REFUSED {error}")
+                    cases += 1
+                else:
+                    raise ValueError(f"accepted invalid workflow: {diagnostic}")
     print(f"SERVER-PROCESSES workflow self-test: PASS cases={cases}")
 
 
