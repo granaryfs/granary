@@ -154,7 +154,7 @@ jobs:
       # K2's local leg as a per-merge gate: the pinned portable MinIO
       # binary (SHA-verified by the harness every run), cached by release
       # string.
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         if: ${{ !cancelled() && steps.workspace-guard.outcome == 'success' }}
         timeout-minutes: 15
         with: { tool: cargo-nextest@0.9.143 }
@@ -266,7 +266,7 @@ jobs:
         with:
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with: { tool: cargo-nextest@0.9.143 }
       - name: verify local xtask runner contract
         timeout-minutes: 5
@@ -349,7 +349,7 @@ jobs:
           shared-key: test-macos
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with: { tool: cargo-nextest@0.9.143 }
       - run: cargo nextest run --profile ci --locked --partition "hash:$PARTITION/3" --no-tests fail
         env:
@@ -395,7 +395,7 @@ jobs:
         with:
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with: { tool: cargo-deny@0.20.2 }
       - run: ./scripts/check-core-purity.sh
       # The DEPENDENCY axis for granary-vfs (the counterpart to
@@ -497,7 +497,7 @@ jobs:
       # sits beside the protocol-constants gate above rather than waiting
       # for the cargo installs further down. Self-test first, same shape
       # as every other gate in this job.
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with: { tool: "shellcheck@0.11.0" }
       - run: ./scripts/check-shellcheck.sh --self-test
       - run: ./scripts/check-shellcheck.sh
@@ -565,7 +565,7 @@ jobs:
       # citation reading the PUBLISHED repository's own CI can perform, and a gate whose only
       # runner is the private exporter cannot protect a public contributor's pull request.
       - run: python3 -I scripts/check-citations.py --output
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with: { tool: "cargo-deny@0.20.2,cargo-shear@1.13.3" }
       - run: cargo deny check
       # The four nested fuzz workspaces have their own locks and are
@@ -622,7 +622,7 @@ jobs:
         with:
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with: { tool: cargo-nextest@0.9.143 }
       - run: cargo clippy --workspace --all-targets --features conformance-breakage
       # authority_host spawns gran beside granary-server.
@@ -720,7 +720,7 @@ jobs:
         with:
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with: { tool: cargo-nextest@0.9.143 }
       # Mandatory: this complete dedicated-ext4 hosted venue still needs qualification.
       - name: supported authority venue, persistent composition, shipping exclusion and exact coverage
@@ -788,7 +788,7 @@ jobs:
         with:
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with: { tool: cargo-nextest@0.9.143 }
       - run: ./scripts/check-overlay-faults.sh
         env:
@@ -831,7 +831,7 @@ jobs:
         with:
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with: { tool: cargo-nextest@0.9.143 }
       - run: cargo clippy -p granary-server --all-targets --features crash-points,overlay-fault-tests
       # authority_host spawns gran beside granary-server.
@@ -988,7 +988,7 @@ jobs:
         with:
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with: { tool: cargo-nextest@0.9.143 }
       # Match lint's cache key so the stack harness can reuse the pinned MinIO binary.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

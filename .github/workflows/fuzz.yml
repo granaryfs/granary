@@ -40,7 +40,7 @@ jobs:
             crates/granary-store/fuzz -> target
             crates/granary-client/fuzz -> target
             crates/granary-fuse/fuzz -> target
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with: { tool: cargo-fuzz@0.13.2 }
       # --target EXPLICIT: cargo-fuzz defaults to the triple its own
       # binary was built for — taiki-e's prebuilt is musl-static, and
