@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 Adrian Ana <adrian@adrianana.com>
+# SPDX-License-Identifier: Apache-2.0
+name: ready-pr-metadata-event-canary
+on: # zizmor: ignore[dangerous-triggers] trusted base SHA only; read-only token; no PR code or shell data
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened, ready_for_review, converted_to_draft]
+    branches: [main]
+permissions: {}
+jobs:
+  observe:
+    if: github.repository == 'granaryfs/granary'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: { contents: read, pull-requests: read }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify trusted checkout before repository code
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$GITHUB_REPOSITORY" = 'granaryfs/granary'
+      - name: Install pinned Markdown parser
+        run: |
+          set -euo pipefail
+          python3 -I -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3, 12) else 1)'
+          python3 -m venv "$RUNNER_TEMP/ready-pr-event-canary-venv"
+          "$RUNNER_TEMP/ready-pr-event-canary-venv/bin/python" -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r scripts/ready-pr-metadata-requirements.txt
+      - name: Observe delivered PR event
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          venv_python="$RUNNER_TEMP/ready-pr-event-canary-venv/bin/python"
+          private="$(mktemp -d "$RUNNER_TEMP/ready-pr-event-canary.XXXXXX")"
+          private="$(cd "$private" && pwd -P)"
+          python3 -I -c 'import pathlib, stat, sys; p=pathlib.Path(sys.argv[1]); parts=(p, *p.parents); good=p.is_absolute() and p.resolve(strict=True)==p and stat.S_IMODE(p.stat().st_mode)==0o700 and all(not q.is_symlink() and not q.stat().st_mode & 0o022 for q in parts); sys.exit(0 if good else 1)' "$private"
+          RUNNER_TEMP="$private" TMPDIR="$private" "$venv_python" -I -B scripts/run-ready-pr-event-canary.py

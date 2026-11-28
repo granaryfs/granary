@@ -225,6 +225,23 @@ def check_job(job, body, name):
 
 def check_workflow(name, text, public=False, path=None, raw=None):
     """Refuse a rule breach with ValueError; return (jobs, own-runner jobs)."""
+    # This elevated trigger is admitted only as one reviewed, regular file.
+    # A changed byte is a refusal even if its generic public syntax looks safe.
+    if path is not None and Path(path) == EVENT_CANARY_WORKFLOW:
+        if (Path(path).is_symlink() or not Path(path).is_file()
+                or Path(path).resolve(strict=True) != Path(path)):
+            raise ValueError(f"{name}: event canary workflow must be a regular file")
+        actual = Path(path).read_bytes()
+        supplied = raw if raw is not None else text.encode("utf-8")
+        if supplied != actual or hashlib.sha256(actual).hexdigest() != EVENT_CANARY_SHA256:
+            raise ValueError(f"{name}: event canary workflow differs from reviewed bytes")
+        root = Path(__file__).resolve().parent.parent
+        for relative, expected in EVENT_CANARY_DEPENDENCIES.items():
+            source = root / relative
+            if (source.is_symlink() or not source.is_file() or source.resolve(strict=True) != source
+                    or hashlib.sha256(source.read_bytes()).hexdigest() != expected):
+                raise ValueError(f"{name}: event canary trusted dependency differs: {relative}")
+        return 1, 0
     lines = uncommented(text)
     if any("pull_request_target" in line for line in lines):
         raise ValueError(f"{name}: names pull_request_target")
@@ -276,6 +293,14 @@ PUBLIC_HOSTED = {"ubuntu-24.04", "macos-26", "macos-15"}
 CANDIDATE_WORKFLOW = "./.github/workflows/public-ci-candidate.yml"
 CANARY_WORKFLOW = Path(__file__).resolve().parent.parent / ".github/workflows/ready-pr-metadata-canary.yml"
 CANARY_SHA256 = "2a6ef4cb4672c31f0c48861288c8b873a78210e667a0c511d73f6494aef0d61f"
+EVENT_CANARY_WORKFLOW = Path(__file__).resolve().parent.parent / ".github/workflows/ready-pr-metadata-event-canary.yml"
+EVENT_CANARY_SHA256 = "381552191cb8b8be1a67a336939d35e5f9294a30e07ead4df5ad41ae2d928717"
+EVENT_CANARY_DEPENDENCIES = {
+    "scripts/run-ready-pr-event-canary.py": "874de6fca23c7c513c173fadfe61e21629b8cf33a84cd009be4a8ce2dd6762de",
+    "scripts/run-ready-pr-canary.py": "764113a8414a4c5dede273a80a21a03292afb2585cf5aca4ba0271263d8232f0",
+    "scripts/check-ready-pr-metadata.py": "474772c731b33e4f36d79cd4eeb83975fdff7ea551857fe6574e85e98635f34c",
+    "scripts/ready-pr-metadata-requirements.txt": "66589ddea2313b020e74f9a23dea13b4781dbd186454d5d844103bb909291452",
+}
 
 
 def public_permissions(body, indent, canary=False):
@@ -699,6 +724,7 @@ jobs:
     print(f"public fork guard self-test: {cases}/{cases} fixture controls passed")
     witness_self_test()
     canary_self_test()
+    event_canary_self_test()
 
 
 def canary_self_test():
@@ -731,6 +757,51 @@ def canary_self_test():
         print("public fork guard self-test: canary copied path refused PASS")
     else:
         raise RuntimeError("canary copied path accepted")
+
+
+def event_canary_self_test():
+    """Only exact event-canary bytes at the one path can bypass the target ban."""
+    text = EVENT_CANARY_WORKFLOW.read_text()
+    check_workflow(EVENT_CANARY_WORKFLOW.name, text, public=True, path=EVENT_CANARY_WORKFLOW)
+    for relative, expected in EVENT_CANARY_DEPENDENCIES.items():
+        EVENT_CANARY_DEPENDENCIES[relative] = "0" * 64
+        try:
+            try:
+                check_workflow(EVENT_CANARY_WORKFLOW.name, text, public=True, path=EVENT_CANARY_WORKFLOW)
+            except ValueError as exc:
+                if "trusted dependency differs" not in str(exc):
+                    raise RuntimeError(f"event canary {relative}: wrong dependency refusal") from exc
+            else:
+                raise RuntimeError(f"event canary {relative}: accepted changed dependency pin")
+        finally:
+            EVENT_CANARY_DEPENDENCIES[relative] = expected
+        print(f"public fork guard self-test: event canary dependency ({relative}) refused PASS")
+    changes = (
+        ("extra byte", text + "\n"),
+        ("extra trigger", text.replace("  pull_request_target:", "  push:\n  pull_request_target:", 1)),
+        ("wider permission", text.replace("pull-requests: read", "pull-requests: write", 1)),
+        ("moved token", text.replace("GITHUB_TOKEN: ${{ github.token }}",
+                                      "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}", 1)),
+        ("head checkout", text.replace("ref: ${{ github.sha }}",
+                                       "ref: ${{ github.event.pull_request.head.sha }}", 1)),
+        ("unpinned action", text.replace("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                                          "actions/checkout@v7", 1)),
+    )
+    for label, changed in changes:
+        if changed == text:
+            raise RuntimeError(f"event canary {label}: mutation did not change workflow")
+        try:
+            check_workflow(EVENT_CANARY_WORKFLOW.name, changed, public=True, path=EVENT_CANARY_WORKFLOW)
+        except ValueError:
+            print(f"public fork guard self-test: event canary byte change ({label}) refused PASS")
+        else:
+            raise RuntimeError(f"event canary {label}: accepted changed workflow")
+    try:
+        check_workflow("other.yml", text, public=True, path=EVENT_CANARY_WORKFLOW.with_name("other.yml"))
+    except ValueError:
+        print("public fork guard self-test: event canary copied path refused PASS")
+    else:
+        raise RuntimeError("event canary copied path accepted")
 
 
 
