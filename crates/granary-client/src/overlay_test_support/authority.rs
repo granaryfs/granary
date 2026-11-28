@@ -24,6 +24,15 @@ use object_store::memory::InMemory;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+#[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the deadline fixture compares real elapsed time across a paused Tokio clock"
+)]
+fn wall_now_for_test() -> std::time::Instant {
+    std::time::Instant::now()
+}
+
 #[derive(Default)]
 #[cfg_attr(
     test,
@@ -60,6 +69,12 @@ pub(crate) struct AuthorityState {
     /// Polls blocked by the probe limit.
     #[cfg(test)]
     pub(crate) probe_waits: usize,
+    /// Keep a selected test probe pending until its enclosing deadline cancels it.
+    #[cfg(test)]
+    pub(crate) probe_pending_at_limit: bool,
+    /// Wall-clock entry time of the first blocked test probe.
+    #[cfg(test)]
+    pub(crate) probe_wait_started: Option<std::time::Instant>,
     /// Refuse this many publications as rate limited before answering any.
     pub(crate) publish_refusals: usize,
     #[cfg(test)]
@@ -483,6 +498,8 @@ impl Authority {
         listing: impl Future<Output = Result<Option<u64>, RootStoreError>>,
     ) -> Result<Option<u64>, RootStoreError> {
         loop {
+            #[cfg(test)]
+            let pending;
             {
                 let mut state = self.state.lock().unwrap();
                 if state.probe_limit.is_none_or(|limit| state.probes < limit) {
@@ -495,7 +512,15 @@ impl Authority {
                 #[cfg(test)]
                 {
                     state.probe_waits += 1;
+                    state
+                        .probe_wait_started
+                        .get_or_insert_with(wall_now_for_test);
+                    pending = state.probe_pending_at_limit;
                 }
+            }
+            #[cfg(test)]
+            if pending {
+                return std::future::pending::<Result<Option<u64>, RootStoreError>>().await;
             }
             crate::SyncRuntime::sleep(
                 &crate::TokioSyncRuntime,

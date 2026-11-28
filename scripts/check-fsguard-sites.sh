@@ -857,7 +857,10 @@ CARGO_CONFIG_ARG="${CARGO_CONFIG_ARGS[0]}"
 # The power-loss rows license one fixture: it writes the simulator's durable
 # overlay tree onto the test-owned scratch store before the offline discard
 # reads it. Thus 232 + 1 = 233.
-EXPECTED_LICENSED_SITES=233
+# The residual-deadline test authority licenses one test-only wall-clock read:
+# it records when a stalled read first blocks while the fixture's Tokio clock
+# is paused. Thus 233 + 1 = 234.
+EXPECTED_LICENSED_SITES=234
 # The CLI licences cover protected input/path comparisons, owned test fixtures,
 # logging setup, control runtime namespace observation, and the endpoint's
 # checked directory creation, lock open and inode-owned cleanup. The recovery
