@@ -94,6 +94,7 @@ jobs:
         timeout-minutes: 15
         with:
           cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: |
             . -> target
             crates/granary-core/fuzz -> target
@@ -189,7 +190,7 @@ jobs:
       # CARGO_BUILD_WARNINGS=warn: a compatibility check, not a lint check;
       # older and newer compilers warn differently.
       # The MSRV check, MinIO test build and musl build share lint's rust-cache entry.
-      # The first successful lint run that misses the cache key saves their dependencies.
+      # The first successful main lint run that misses the cache key saves their dependencies.
       # Cargo keys artifacts by compiler version, so the MSRV and pinned toolchains
       # use separate artifacts.
       - name: check workspace on MSRV
@@ -262,7 +263,9 @@ jobs:
       # 2026-08-16, toolchain destroyed after ONE job. Harmless on hosted
       # runners, which are discarded anyway, so set it unconditionally.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { cache-bin: "false" }
+        with:
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with: { tool: cargo-nextest@0.9.143 }
       - name: verify local xtask runner contract
@@ -305,6 +308,10 @@ jobs:
         if: always()
         run: python3 -I scripts/check-server-processes.py check --cleanup --state "$RUNNER_TEMP/server-processes.json"
   test-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2, 3]
     runs-on: macos-26
     # A cold 3-core runner took 12 min to build and reached 6,625/6,626 tests at the 35 min limit.
     timeout-minutes: 50
@@ -337,10 +344,18 @@ jobs:
             dir=${dir%/*}
             dir=${dir:-/}
           done
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: test-macos
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with: { tool: cargo-nextest@0.9.143 }
-      - run: cargo nextest run --profile ci --locked
+      - run: cargo nextest run --profile ci --locked --partition "hash:$PARTITION/3" --no-tests fail
+        env:
+          PARTITION: ${{ matrix.partition }}
       - run: cargo test --doc --locked
+        if: matrix.partition == 1
       - name: no server may survive this job
         if: always()
         run: python3 -I scripts/check-server-processes.py check --state "$RUNNER_TEMP/server-processes.json"
@@ -377,7 +392,9 @@ jobs:
       # 2026-08-16, toolchain destroyed after ONE job. Harmless on hosted
       # runners, which are discarded anyway, so set it unconditionally.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { cache-bin: "false" }
+        with:
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with: { tool: cargo-deny@0.20.2 }
       - run: ./scripts/check-core-purity.sh
@@ -457,7 +474,9 @@ jobs:
       # 2026-08-16, toolchain destroyed after ONE job. Harmless on hosted
       # runners, which are discarded anyway, so set it unconditionally.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { cache-bin: "false" }
+        with:
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # Needs no toolchain and runs in a second, so it sits ahead of the
       # cargo installs below and fails fast on wire drift no test in the
       # crate can see.
@@ -600,7 +619,9 @@ jobs:
       # 2026-08-16, toolchain destroyed after ONE job. Harmless on hosted
       # runners, which are discarded anyway, so set it unconditionally.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { cache-bin: "false" }
+        with:
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with: { tool: cargo-nextest@0.9.143 }
       - run: cargo clippy --workspace --all-targets --features conformance-breakage
@@ -696,7 +717,9 @@ jobs:
       # cache-bin: false is load-bearing on a persistent self-hosted runner
       # (the `breakage` job's comment says why).
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { cache-bin: "false" }
+        with:
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with: { tool: cargo-nextest@0.9.143 }
       # Mandatory: this complete dedicated-ext4 hosted venue still needs qualification.
@@ -762,7 +785,9 @@ jobs:
       # cache-bin: false is load-bearing on a persistent self-hosted runner
       # (the `breakage` job's comment says why).
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { cache-bin: "false" }
+        with:
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with: { tool: cargo-nextest@0.9.143 }
       - run: ./scripts/check-overlay-faults.sh
@@ -803,7 +828,9 @@ jobs:
       # cache-bin: false is load-bearing on a persistent self-hosted runner
       # (the `breakage` job's comment says why).
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { cache-bin: "false" }
+        with:
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with: { tool: cargo-nextest@0.9.143 }
       - run: cargo clippy -p granary-server --all-targets --features crash-points,overlay-fault-tests
@@ -958,7 +985,9 @@ jobs:
       # 2026-08-16, toolchain destroyed after ONE job. Harmless on hosted
       # runners, which are discarded anyway, so set it unconditionally.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { cache-bin: "false" }
+        with:
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with: { tool: cargo-nextest@0.9.143 }
       # Match lint's cache key so the stack harness can reuse the pinned MinIO binary.
