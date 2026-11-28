@@ -437,66 +437,71 @@ fn residual_preflight_refuses_changed_frozen_root() {
 
 #[test]
 fn residual_stalled_read_obeys_both_entry_deadlines() {
-    let mut rows = Vec::new();
-    for explicit in [false, true] {
-        let stopped = sealed(false, DIRTY, 0);
-        let before = store_bytes(&stopped.paths.store);
-        let sends_before = sends(&stopped);
-        {
-            let mut state = stopped.state.lock().unwrap();
-            state.probe_waits = 0;
-            // Writable discovery reads one head before residual admission.
-            state.probe_limit = Some(state.probes + usize::from(!explicit));
-        }
-        let state = stopped.state.clone();
-        // A watchdog releases the read so an absent deadline fails an assertion.
-        let watchdog = std::thread::spawn(move || {
-            let start = crate::SyncRuntime::now(&crate::TokioSyncRuntime);
-            while state.lock().unwrap().probe_waits == 0 {
-                assert!(
-                    crate::SyncRuntime::now(&crate::TokioSyncRuntime) - start
-                        < std::time::Duration::from_secs(10)
-                );
-                crate::overlay_test_support::block_for_test(std::time::Duration::from_millis(5));
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    // A missing deadline must fail this test without releasing the pending read.
+    let worker = std::thread::spawn(move || {
+        let mut rows = Vec::new();
+        for explicit in [false, true] {
+            let stopped = sealed(false, DIRTY, 0);
+            let before = store_bytes(&stopped.paths.store);
+            let sends_before = sends(&stopped);
+            {
+                let mut state = stopped.state.lock().unwrap();
+                state.probe_waits = 0;
+                state.probe_wait_started = None;
+                state.probe_pending_at_limit = true;
+                // Writable discovery reads one head before residual admission.
+                state.probe_limit = Some(state.probes + usize::from(!explicit));
             }
-            let entered = crate::SyncRuntime::now(&crate::TokioSyncRuntime);
-            crate::overlay_test_support::block_for_test(std::time::Duration::from_millis(600));
-            state.lock().unwrap().probe_limit = None;
-            entered
-        });
-        let bound = std::time::Duration::from_millis(250);
-        let result = if explicit {
-            super::recovery::recover_with_paused_finish_delays(
-                &stopped,
-                Default::default(),
-                crate::SyncOptions::default().workspace_bytes,
-            )
-            .0
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-        } else {
-            finish_hooks_for_test(FinishHooks {
-                bound: Some(bound),
-                ..Default::default()
-            });
-            let result = restart(&stopped, &Events::default())
+            let bound = std::time::Duration::from_millis(250);
+            let result = if explicit {
+                super::recovery::recover_with_paused_finish_delays(
+                    &stopped,
+                    Default::default(),
+                    crate::SyncOptions::default().workspace_bytes,
+                )
+                .0
                 .map(|_| ())
-                .map_err(|e| e.to_string());
-            finish_hooks_for_test(FinishHooks::default());
-            result
-        };
-        let ended = crate::SyncRuntime::now(&crate::TokioSyncRuntime);
-        let entered = watchdog.join().unwrap();
-        rows.push((
-            explicit,
-            result,
-            explicit
-                || ended.saturating_duration_since(entered)
-                    <= bound + std::time::Duration::from_millis(250),
-            store_bytes(&stopped.paths.store) == before,
-            sends(&stopped) == sends_before,
-        ));
-    }
+                .map_err(|e| e.to_string())
+            } else {
+                finish_hooks_for_test(FinishHooks {
+                    bound: Some(bound),
+                    ..Default::default()
+                });
+                let result = restart(&stopped, &Events::default())
+                    .map(|_| ())
+                    .map_err(|e| e.to_string());
+                finish_hooks_for_test(FinishHooks::default());
+                result
+            };
+            let ended = std::time::Instant::now();
+            let state = stopped.state.lock().unwrap();
+            assert_eq!(state.probe_waits, 1, "the stalled read must stay pending");
+            let entered = state.probe_wait_started.unwrap();
+            drop(state);
+            rows.push((
+                explicit,
+                result,
+                explicit
+                    || ended.saturating_duration_since(entered)
+                        <= bound + std::time::Duration::from_millis(250),
+                store_bytes(&stopped.paths.store) == before,
+                sends(&stopped) == sends_before,
+            ));
+        }
+        let _ = sender.send(rows);
+    });
+    let rows = match receiver.recv_timeout(std::time::Duration::from_secs(20)) {
+        Ok(rows) => rows,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            panic!("residual deadline test exceeded its wall-clock failure bound")
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            worker.join().unwrap();
+            panic!("residual deadline test worker exited without results")
+        }
+    };
+    worker.join().unwrap();
     assert_eq!(
         (&rows, rows.len()),
         (
