@@ -5,7 +5,7 @@
 # Virtual manifest: resolver is NOT inferred from member editions — explicit
 # or it silently degrades to v1-with-a-warning.
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "xtask"]
 
 [workspace.package]
 edition = "2024"

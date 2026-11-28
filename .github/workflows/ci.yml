@@ -265,6 +265,14 @@ jobs:
         with: { cache-bin: "false" }
       - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with: { tool: cargo-nextest@0.9.143 }
+      - name: verify local xtask runner contract
+        timeout-minutes: 5
+        run: |
+          # Scratch Cargo workspaces use this checkout's pin even when the
+          # caller inherited a different RUSTUP_TOOLCHAIN.
+          toolchain=$(python3 -I -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          export RUSTUP_TOOLCHAIN="$toolchain"
+          python3 -I scripts/test-check-local.py -v
       - name: Require the Linux metrics listener rows
         if: runner.os == 'Linux'
         run: |
